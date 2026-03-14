@@ -1,0 +1,126 @@
+{
+  "identity": {
+    "name": "Panel Extractor",
+    "description": "A precision tool for webtoon enthusiasts to manually slice and dice long strip comics into shareable panels.",
+    "persona": "The Dark Room Utility - Efficient, precise, and distraction-free.",
+    "emotional_tone": "Cinematic, Focused, Technical"
+  },
+  "typography": {
+    "font_family": {
+      "heading": "Barlow Condensed, sans-serif",
+      "body": "Manrope, sans-serif",
+      "mono": "JetBrains Mono, monospace"
+    },
+    "scale": {
+      "h1": "text-4xl md:text-5xl font-bold tracking-tight uppercase",
+      "h2": "text-2xl md:text-3xl font-semibold tracking-tight",
+      "h3": "text-xl font-medium",
+      "body": "text-base leading-relaxed",
+      "caption": "text-xs tracking-wider text-muted-foreground uppercase"
+    },
+    "imports": [
+      "@import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600;700&family=JetBrains+Mono:wght@400;500&family=Manrope:wght@400;500;700&display=swap');"
+    ]
+  },
+  "colors": {
+    "theme": "dark",
+    "palette": {
+      "background": "#09090b",
+      "surface": "#18181b",
+      "surface_highlight": "#27272a",
+      "border": "#27272a",
+      "primary": "#ef4444",
+      "primary_foreground": "#ffffff",
+      "secondary": "#27272a",
+      "secondary_foreground": "#fafafa",
+      "muted": "#71717a",
+      "muted_foreground": "#a1a1aa",
+      "accent": "#ef4444",
+      "destructive": "#7f1d1d",
+      "text_main": "#f4f4f5",
+      "text_secondary": "#a1a1aa"
+    },
+    "utility": {
+      "overlay": "rgba(0, 0, 0, 0.85)",
+      "marker_line": "#ef4444",
+      "marker_glow": "0 0 10px rgba(239, 68, 68, 0.6)"
+    }
+  },
+  "components": {
+    "button": {
+      "default": "h-11 px-6 rounded-md font-semibold tracking-wide transition-all active:scale-95",
+      "primary": "bg-primary text-primary-foreground hover:bg-primary/90 shadow-[0_0_15px_rgba(239,68,68,0.3)]",
+      "secondary": "bg-secondary text-secondary-foreground hover:bg-secondary/80",
+      "ghost": "hover:bg-accent/10 hover:text-accent",
+      "fab": "fixed bottom-8 right-8 h-14 w-14 rounded-full bg-primary text-white shadow-lg flex items-center justify-center z-50 active:scale-90 transition-transform"
+    },
+    "card": {
+      "wrapper": "bg-surface border border-border rounded-lg overflow-hidden transition-colors hover:border-primary/50 group relative",
+      "thumbnail": "aspect-[2/3] w-full object-cover bg-secondary/50",
+      "content": "p-4 space-y-1"
+    },
+    "input": {
+      "base": "h-11 bg-surface border border-input rounded-md px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+    },
+    "marker": {
+      "line": "absolute w-full h-[2px] bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.8)] pointer-events-none z-10",
+      "handle": "absolute right-0 -mt-3 mr-2 bg-red-500 text-white text-[10px] px-2 py-1 rounded-full font-mono font-bold"
+    }
+  },
+  "layout_strategies": {
+    "file_manager": {
+      "grid": "grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 p-4 pb-24",
+      "header": "sticky top-0 z-40 w-full bg-background/80 backdrop-blur-xl border-b border-border p-4 flex items-center justify-between"
+    },
+    "editor": {
+      "container": "relative w-full min-h-screen bg-black flex flex-col items-center",
+      "canvas": "w-full max-w-2xl bg-zinc-900 shadow-2xl min-h-screen relative",
+      "overlay_controls": "fixed bottom-0 left-0 right-0 p-6 bg-gradient-to-t from-black via-black/90 to-transparent z-50 flex justify-between items-end pointer-events-none [&>*]:pointer-events-auto"
+    }
+  },
+  "visual_enhancers": {
+    "glassmorphism": "backdrop-blur-xl bg-black/60 border-t border-white/10",
+    "neon_glow": "shadow-[0_0_20px_rgba(239,68,68,0.15)]",
+    "scancode_texture": "bg-[url('data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0IiBoZWlnaHQ9IjQiPgo8cmVjdCB3aWR0aD0iNCIgaGVpZ2h0PSI0IiBmaWxsPSIjMTgxODFiIi8+CjxyZWN0IHdpZHRoPSIxIiBoZWlnaHQ9IjEiIGZpbGw9IiMyNzI3MmEiLz4KPC9zdmc+')] opacity-20"
+  },
+  "accessibility": {
+    "touch_targets": "min-h-[44px] min-w-[44px]",
+    "contrast_check": "Ensure text-main (#f4f4f5) on background (#09090b) meets APCA Lc 75+",
+    "reduced_motion": "Respect prefers-reduced-motion for panel transitions"
+  },
+  "icons": {
+    "library": "lucide-react",
+    "mapping": {
+      "import": "Plus",
+      "folder": "Folder",
+      "image": "Image",
+      "cut": "Scissors",
+      "delete": "Trash2",
+      "share": "Share2",
+      "back": "ChevronLeft",
+      "settings": "Settings",
+      "check": "Check",
+      "close": "X",
+      "undo": "RotateCcw"
+    }
+  },
+  "universal_guidelines": [
+    "Do not use generic 'Inter' for headings. Use Barlow Condensed.",
+    "No gradients on dark backgrounds unless it's a subtle glow.",
+    "All interactive elements MUST have `data-testid` attributes (kebab-case).",
+    "Use 'sonner' for toast notifications.",
+    "Mobile-first: Always verify layout on 375px width.",
+    "Avoid `transition: all`. Animate specific properties.",
+    "Use Tailwind `zinc` colors for greyscale to avoid muddy greys."
+  ],
+  "instructions_to_main_agent": [
+    "1. Setup Shadcn UI with the 'zinc' neutral and 'red' primary theme.",
+    "2. Install `lucide-react` for icons.",
+    "3. Create the `FileManager` page first with a responsive grid layout.",
+    "4. Implement the `PanelEditor` using a large `div` or `canvas` container for the image. Use absolute positioning for the red line markers.",
+    "5. Ensure the 'Add Marker' button is a large FAB in the bottom right corner.",
+    "6. Use `react-zoom-pan-pinch` or native scroll with careful touch handling for the image viewer if needed, or just native overflow-y-scroll for simplicity as per requirements (vertical scrolling).",
+    "7. Mock the backend API calls if the backend isn't ready, but structure the services clearly.",
+    "8. Stick to the dark theme strictly. No light mode toggle needed for MVP as per 'Dark theme preferred' constraint."
+  ]
+}
