@@ -101,3 +101,153 @@
 #====================================================================================================
 # Testing Data - Main Agent and testing sub agent both should log testing data below this section
 #====================================================================================================
+
+user_problem_statement: |
+  Panel Extractor mobile app. Users import long vertical screenshots (webtoons), place markers, extract panels between marker pairs into timestamped folders. Full CRUD file manager on home page and folder view. Dark theme. Local-first utility app.
+
+backend:
+  - task: "Image upload and processing"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Upload, process markers, extract panels all working"
+
+  - task: "CRUD API for folders and images"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "All CRUD endpoints implemented: create/delete/rename folder, delete/rename image, bulk-delete, move-items, copy-items"
+
+frontend:
+  - task: "Issue 1 - Extraction popup correct"
+    implemented: true
+    working: true
+    file: "frontend/app/editor.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "editor.tsx already shows 'Panels extracted successfully' with 'Return to Main Page' button that calls router.replace('/')"
+
+  - task: "Issue 2 - Rename for images/panels"
+    implemented: true
+    working: "NA"
+    file: "frontend/app/index.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Fixed handleRenameAction in index.tsx to support both folders and images. Fixed type mismatch (was passing raw FolderData without 'type' field). Added image rename in folder/[id].tsx via new selection toolbar"
+
+  - task: "Issue 3 - Delete flow with confirmation"
+    implemented: true
+    working: "NA"
+    file: "frontend/app/index.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "index.tsx already has confirmation dialog. Shows 'Deleted successfully' after. folder/[id].tsx folder delete now shows confirmation + 'Deleted successfully' + navigates to root on OK"
+
+  - task: "Issue 4 - Bulk delete"
+    implemented: true
+    working: "NA"
+    file: "frontend/app/index.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Bulk delete calls api.bulkDelete with selectedImages and selectedFolders arrays. Backend handles both image and folder deletion."
+
+  - task: "Issue 5 - Newly created folders can be deleted"
+    implemented: true
+    working: "NA"
+    file: "frontend/app/index.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "After create folder, loadData() refreshes list from server with correct IDs. handleDelete properly calls bulkDelete with folder IDs from selectedFolders set."
+
+  - task: "Issue 6 - Full CRUD in folder/[id].tsx"
+    implemented: true
+    working: "NA"
+    file: "frontend/app/folder/[id].tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Complete rewrite of folder/[id].tsx. Added: long-press selection mode, selection toolbar (Move/Copy/Rename/Share/Delete), rename modal for panels, folder picker modal for move/copy, folder rename via header edit button, folder delete with confirmation + success + navigation"
+
+  - task: "Issue 7 - Source screenshots CRUD"
+    implemented: true
+    working: "NA"
+    file: "frontend/app/index.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Fixed handlePickFolder - copyItems was called without targetFolderId (bug). Now passes targetFolderId correctly. Delete of source images uses selectedImages set via bulkDelete."
+
+metadata:
+  created_by: "main_agent"
+  version: "1.0"
+  test_sequence: 1
+  run_ui: true
+
+test_plan:
+  current_focus:
+    - "Issue 2 - Rename for images/panels"
+    - "Issue 3 - Delete flow with confirmation"
+    - "Issue 4 - Bulk delete"
+    - "Issue 5 - Newly created folders can be deleted"
+    - "Issue 6 - Full CRUD in folder/[id].tsx"
+    - "Issue 7 - Source screenshots CRUD"
+  stuck_tasks: []
+  test_all: true
+  test_priority: "high_first"
+
+agent_communication:
+  - agent: "main"
+    message: |
+      All 7 P0 issues have been fixed:
+      1. editor.tsx already had correct popup - no change needed
+      2. Fixed handleRenameAction in index.tsx to support images AND folders (was only folders, had type field bug)
+      3. folder/[id].tsx folder delete now shows confirmation + success message + navigates to /
+      4. Bulk delete in index.tsx uses bulkDelete API correctly - needs testing
+      5. Folder creation + delete flow looks correct - needs testing
+      6. Complete rewrite of folder/[id].tsx with full selection mode, toolbar (Move/Copy/Rename/Share/Delete), modals
+      7. Fixed handlePickFolder to pass targetFolderId to copyItems (was missing!)
+      
+      Please test all 7 issues. Focus on:
+      - Long-press on items to enter selection mode
+      - Rename for both folders and images (index.tsx)
+      - Delete confirmation dialogs
+      - folder/[id].tsx new features: long-press panels, selection toolbar, rename panel, rename folder, delete folder with navigation
+      - Copy To action (should now copy to selected folder, not root)

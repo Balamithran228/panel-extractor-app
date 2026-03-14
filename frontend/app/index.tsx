@@ -47,7 +47,7 @@ export default function FileManagerScreen() {
   /* modals */
   const [showCreateFolder, setShowCreateFolder] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
-  const [renameTarget, setRenameTarget] = useState<FolderData | null>(null);
+  const [renameTarget, setRenameTarget] = useState<{type: 'folder' | 'image'; id: string; name: string} | null>(null);
   const [renameName, setRenameName] = useState('');
   const [showFolderPicker, setShowFolderPicker] = useState(false);
   const [folderPickerAction, setFolderPickerAction] = useState<'move' | 'copy'>('move');
@@ -141,10 +141,19 @@ export default function FileManagerScreen() {
     if (!renameTarget) return;
     const name = renameName.trim();
     if (!name) return;
-    await api.renameFolder(renameTarget.id, name);
-    setRenameTarget(null);
-    setRenameName('');
-    loadData();
+    try {
+      if (renameTarget.type === 'folder') {
+        await api.renameFolder(renameTarget.id, name);
+      } else {
+        await api.renameImage(renameTarget.id, name);
+      }
+      setRenameTarget(null);
+      setRenameName('');
+      exitSelectMode();
+      loadData();
+    } catch (e: any) {
+      Alert.alert('Error', e.message);
+    }
   };
 
   const handleDelete = () => {
@@ -163,6 +172,9 @@ export default function FileManagerScreen() {
             );
             exitSelectMode();
             loadData();
+            Alert.alert('Deleted successfully', '', [
+              { text: 'OK' },
+            ]);
           },
         },
       ],
@@ -181,10 +193,14 @@ export default function FileManagerScreen() {
   const handlePickFolder = async (targetFolderId: string | null) => {
     setShowFolderPicker(false);
     const ids = Array.from(selectedImages);
-    if (folderPickerAction === 'move') {
-      await api.moveItems(ids, targetFolderId);
-    } else {
-      await api.copyItems(ids);
+    try {
+      if (folderPickerAction === 'move') {
+        await api.moveItems(ids, targetFolderId);
+      } else {
+        await api.copyItems(ids, targetFolderId);
+      }
+    } catch (e: any) {
+      Alert.alert('Error', e.message);
     }
     exitSelectMode();
     loadData();
@@ -203,13 +219,20 @@ export default function FileManagerScreen() {
   };
 
   const handleRenameAction = () => {
-    if (selectedFolders.size !== 1 || selectedImages.size > 0) {
-      Alert.alert('Rename', 'Select exactly one folder to rename.');
+    const totalSel = selectedFolders.size + selectedImages.size;
+    if (totalSel !== 1) {
+      Alert.alert('Rename', 'Select exactly one item to rename.');
       return;
     }
-    const fid = Array.from(selectedFolders)[0];
-    const f = folders.find((x) => x.id === fid);
-    if (f) { setRenameName(f.name); setRenameTarget(f); }
+    if (selectedFolders.size === 1) {
+      const fid = Array.from(selectedFolders)[0];
+      const f = folders.find((x) => x.id === fid);
+      if (f) { setRenameName(f.name); setRenameTarget({ type: 'folder', id: f.id, name: f.name }); }
+    } else {
+      const iid = Array.from(selectedImages)[0];
+      const img = sources.find((x) => x.id === iid);
+      if (img) { setRenameName(img.filename); setRenameTarget({ type: 'image', id: img.id, name: img.filename }); }
+    }
   };
 
   /* ── list data ── */
@@ -432,11 +455,11 @@ export default function FileManagerScreen() {
         </View>
       </Modal>
 
-      {/* Rename Folder Modal */}
+      {/* Rename Modal */}
       <Modal visible={renameTarget !== null} transparent animationType="fade" onRequestClose={() => { setRenameTarget(null); setRenameName(''); }}>
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>Rename Folder</Text>
+            <Text style={styles.modalTitle}>Rename {renameTarget?.type === 'image' ? 'File' : 'Folder'}</Text>
             <TextInput
               testID="rename-folder-input"
               style={styles.modalInput}

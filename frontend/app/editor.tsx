@@ -99,15 +99,13 @@ export default function EditorScreen() {
         display_height: displayHeight,
       });
       Alert.alert(
-        'Panels Extracted',
+        'Panels extracted successfully',
         `${result.panel_count} panels saved to "${result.folder_name}"`,
         [
           {
-            text: 'View Folder',
-            onPress: () =>
-              router.replace({ pathname: '/folder/[id]', params: { id: result.folder_id } }),
+            text: 'Return to Main Page',
+            onPress: () => router.replace('/'),
           },
-          { text: 'OK', style: 'cancel' },
         ]
       );
     } catch (e: any) {

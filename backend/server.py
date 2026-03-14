@@ -58,12 +58,16 @@ class FolderCreate(BaseModel):
 class FolderRename(BaseModel):
     name: str
 
+class ImageRename(BaseModel):
+    filename: str
+
 class MoveItemsRequest(BaseModel):
     image_ids: List[str] = []
     target_folder_id: Optional[str] = None  # None = move to root
 
 class CopyItemsRequest(BaseModel):
     image_ids: List[str] = []
+    target_folder_id: Optional[str] = None
 
 class BulkDeleteRequest(BaseModel):
     image_ids: List[str] = []
@@ -198,6 +202,15 @@ async def delete_image(image_id: str):
     return {"message": "Image deleted"}
 
 
+@api_router.patch("/images/{image_id}")
+async def rename_image(image_id: str, req: ImageRename):
+    doc = await db.images.find_one({"id": image_id}, {"_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Image not found")
+    await db.images.update_one({"id": image_id}, {"$set": {"filename": req.filename}})
+    return {"message": "Image renamed", "filename": req.filename}
+
+
 # --- Folder Endpoints ---
 
 @api_router.post("/folders", response_model=FolderResponse)
@@ -287,20 +300,22 @@ async def move_items(req: MoveItemsRequest):
         old_folder = doc.get("folder_id")
         new_folder = req.target_folder_id
 
-        # Move file on disk if panel type
-        if doc["image_type"] == "panel":
-            if old_folder:
-                old_path = PANELS_DIR / old_folder / doc["stored_filename"]
-            else:
-                old_path = SOURCES_DIR / doc["stored_filename"]
-            if new_folder:
-                new_dir = PANELS_DIR / new_folder
-                new_dir.mkdir(parents=True, exist_ok=True)
-                new_path = new_dir / doc["stored_filename"]
-            else:
-                new_path = SOURCES_DIR / doc["stored_filename"]
-            if old_path.exists() and str(old_path) != str(new_path):
-                shutil.move(str(old_path), str(new_path))
+        # Determine old path
+        if old_folder:
+            old_path = PANELS_DIR / old_folder / doc["stored_filename"]
+        else:
+            old_path = SOURCES_DIR / doc["stored_filename"]
+
+        # Determine new path
+        if new_folder:
+            new_dir = PANELS_DIR / new_folder
+            new_dir.mkdir(parents=True, exist_ok=True)
+            new_path = new_dir / doc["stored_filename"]
+        else:
+            new_path = SOURCES_DIR / doc["stored_filename"]
+
+        if old_path.exists() and str(old_path) != str(new_path):
+            shutil.move(str(old_path), str(new_path))
 
         await db.images.update_one({"id": img_id}, {"$set": {"folder_id": new_folder}})
         moved += 1
@@ -318,15 +333,21 @@ async def copy_items(req: CopyItemsRequest):
 
         new_id = str(uuid.uuid4())
         new_stored = f"{new_id}.png"
+        target_folder = req.target_folder_id if req.target_folder_id is not None else doc.get("folder_id")
 
-        if doc["image_type"] == "source":
-            src = SOURCES_DIR / doc["stored_filename"]
-            dst = SOURCES_DIR / new_stored
+        # Source file location
+        if doc.get("folder_id"):
+            src = PANELS_DIR / doc["folder_id"] / doc["stored_filename"]
         else:
-            src = PANELS_DIR / doc.get("folder_id", "") / doc["stored_filename"]
-            dst_dir = PANELS_DIR / doc.get("folder_id", "")
+            src = SOURCES_DIR / doc["stored_filename"]
+
+        # Destination file location
+        if target_folder:
+            dst_dir = PANELS_DIR / target_folder
             dst_dir.mkdir(parents=True, exist_ok=True)
             dst = dst_dir / new_stored
+        else:
+            dst = SOURCES_DIR / new_stored
 
         if src.exists():
             shutil.copy2(str(src), str(dst))
@@ -338,7 +359,7 @@ async def copy_items(req: CopyItemsRequest):
             "width": doc["width"],
             "height": doc["height"],
             "image_type": doc["image_type"],
-            "folder_id": doc.get("folder_id"),
+            "folder_id": target_folder,
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
         await db.images.insert_one(new_doc)

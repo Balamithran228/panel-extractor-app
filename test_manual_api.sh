@@ -1,6 +1,6 @@
 #!/bin/bash
 
-BASE_URL="https://comic-slicer.preview.emergentagent.com/api"
+BASE_URL="https://marker-crop-tool.preview.emergentagent.com/api"
 
 echo "=== Manual API Testing ==="
 echo ""
