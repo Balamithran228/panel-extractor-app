@@ -55,6 +55,20 @@ class ImageResponse(BaseModel):
 class FolderCreate(BaseModel):
     name: str
 
+class FolderRename(BaseModel):
+    name: str
+
+class MoveItemsRequest(BaseModel):
+    image_ids: List[str] = []
+    target_folder_id: Optional[str] = None  # None = move to root
+
+class CopyItemsRequest(BaseModel):
+    image_ids: List[str] = []
+
+class BulkDeleteRequest(BaseModel):
+    image_ids: List[str] = []
+    folder_ids: List[str] = []
+
 class FolderResponse(BaseModel):
     id: str
     name: str
@@ -247,6 +261,122 @@ async def delete_folder(folder_id: str):
     await db.images.delete_many({"folder_id": folder_id})
     await db.folders.delete_one({"id": folder_id})
     return {"message": "Folder deleted"}
+
+
+@api_router.patch("/folders/{folder_id}")
+async def rename_folder(folder_id: str, req: FolderRename):
+    folder = await db.folders.find_one({"id": folder_id}, {"_id": 0})
+    if not folder:
+        raise HTTPException(status_code=404, detail="Folder not found")
+    await db.folders.update_one({"id": folder_id}, {"$set": {"name": req.name}})
+    return {"message": "Folder renamed", "name": req.name}
+
+
+@api_router.post("/move-items")
+async def move_items(req: MoveItemsRequest):
+    if req.target_folder_id:
+        dest = await db.folders.find_one({"id": req.target_folder_id}, {"_id": 0})
+        if not dest:
+            raise HTTPException(status_code=404, detail="Destination folder not found")
+
+    moved = 0
+    for img_id in req.image_ids:
+        doc = await db.images.find_one({"id": img_id}, {"_id": 0})
+        if not doc:
+            continue
+        old_folder = doc.get("folder_id")
+        new_folder = req.target_folder_id
+
+        # Move file on disk if panel type
+        if doc["image_type"] == "panel":
+            if old_folder:
+                old_path = PANELS_DIR / old_folder / doc["stored_filename"]
+            else:
+                old_path = SOURCES_DIR / doc["stored_filename"]
+            if new_folder:
+                new_dir = PANELS_DIR / new_folder
+                new_dir.mkdir(parents=True, exist_ok=True)
+                new_path = new_dir / doc["stored_filename"]
+            else:
+                new_path = SOURCES_DIR / doc["stored_filename"]
+            if old_path.exists() and str(old_path) != str(new_path):
+                shutil.move(str(old_path), str(new_path))
+
+        await db.images.update_one({"id": img_id}, {"$set": {"folder_id": new_folder}})
+        moved += 1
+
+    return {"moved": moved}
+
+
+@api_router.post("/copy-items")
+async def copy_items(req: CopyItemsRequest):
+    copies = []
+    for img_id in req.image_ids:
+        doc = await db.images.find_one({"id": img_id}, {"_id": 0})
+        if not doc:
+            continue
+
+        new_id = str(uuid.uuid4())
+        new_stored = f"{new_id}.png"
+
+        if doc["image_type"] == "source":
+            src = SOURCES_DIR / doc["stored_filename"]
+            dst = SOURCES_DIR / new_stored
+        else:
+            src = PANELS_DIR / doc.get("folder_id", "") / doc["stored_filename"]
+            dst_dir = PANELS_DIR / doc.get("folder_id", "")
+            dst_dir.mkdir(parents=True, exist_ok=True)
+            dst = dst_dir / new_stored
+
+        if src.exists():
+            shutil.copy2(str(src), str(dst))
+
+        new_doc = {
+            "id": new_id,
+            "filename": f"Copy_{doc['filename']}",
+            "stored_filename": new_stored,
+            "width": doc["width"],
+            "height": doc["height"],
+            "image_type": doc["image_type"],
+            "folder_id": doc.get("folder_id"),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+        await db.images.insert_one(new_doc)
+        copies.append(doc_to_image_response(new_doc))
+
+    return {"copied": len(copies), "items": copies}
+
+
+@api_router.post("/bulk-delete")
+async def bulk_delete(req: BulkDeleteRequest):
+    deleted_images = 0
+    deleted_folders = 0
+
+    for img_id in req.image_ids:
+        doc = await db.images.find_one({"id": img_id}, {"_id": 0})
+        if not doc:
+            continue
+        if doc["image_type"] == "source":
+            fp = SOURCES_DIR / doc["stored_filename"]
+        else:
+            fp = PANELS_DIR / doc.get("folder_id", "") / doc["stored_filename"]
+        if fp.exists():
+            fp.unlink()
+        await db.images.delete_one({"id": img_id})
+        deleted_images += 1
+
+    for fid in req.folder_ids:
+        folder = await db.folders.find_one({"id": fid}, {"_id": 0})
+        if not folder:
+            continue
+        fp = PANELS_DIR / fid
+        if fp.exists():
+            shutil.rmtree(str(fp))
+        await db.images.delete_many({"folder_id": fid})
+        await db.folders.delete_one({"id": fid})
+        deleted_folders += 1
+
+    return {"deleted_images": deleted_images, "deleted_folders": deleted_folders}
 
 
 # --- Process Endpoint ---

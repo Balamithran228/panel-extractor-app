@@ -72,6 +72,27 @@ export const api = {
   deleteFolder: (folderId: string): Promise<void> =>
     request(`/folders/${folderId}`, { method: 'DELETE' }),
 
+  renameFolder: (folderId: string, name: string): Promise<void> =>
+    request(`/folders/${folderId}`, { method: 'PATCH', body: JSON.stringify({ name }) }),
+
+  moveItems: (imageIds: string[], targetFolderId: string | null): Promise<void> =>
+    request('/move-items', {
+      method: 'POST',
+      body: JSON.stringify({ image_ids: imageIds, target_folder_id: targetFolderId }),
+    }),
+
+  copyItems: (imageIds: string[]): Promise<void> =>
+    request('/copy-items', {
+      method: 'POST',
+      body: JSON.stringify({ image_ids: imageIds }),
+    }),
+
+  bulkDelete: (imageIds: string[], folderIds: string[]): Promise<void> =>
+    request('/bulk-delete', {
+      method: 'POST',
+      body: JSON.stringify({ image_ids: imageIds, folder_ids: folderIds }),
+    }),
+
   processMarkers: (data: {
     image_id: string;
     markers: number[];

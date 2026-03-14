@@ -10,7 +10,6 @@ import {
   Dimensions,
   NativeSyntheticEvent,
   NativeScrollEvent,
-  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
@@ -20,6 +19,7 @@ import { colors } from '@/utils/theme';
 import { api, ImageData } from '@/utils/api';
 
 const SCREEN_W = Dimensions.get('window').width;
+const MARKER_OFFSET = 0.35; // 35% from top — slightly above center
 
 export default function EditorScreen() {
   const router = useRouter();
@@ -33,7 +33,6 @@ export default function EditorScreen() {
   const [viewportH, setViewportH] = useState(0);
   const [markers, setMarkers] = useState<number[]>([]);
 
-  // Compute display dimensions
   const displayWidth = SCREEN_W;
   const displayHeight = imageData
     ? (imageData.height / imageData.width) * displayWidth
@@ -55,16 +54,13 @@ export default function EditorScreen() {
     []
   );
 
-  const handleLayout = useCallback(
-    (e: any) => {
-      setViewportH(e.nativeEvent.layout.height);
-    },
-    []
-  );
+  const handleLayout = useCallback((e: any) => {
+    setViewportH(e.nativeEvent.layout.height);
+  }, []);
 
   const addMarker = () => {
     if (!displayHeight) return;
-    const pos = scrollY + viewportH / 2;
+    const pos = scrollY + viewportH * MARKER_OFFSET;
     const clamped = Math.max(0, Math.min(pos, displayHeight));
     setMarkers((prev) => {
       const updated = [...prev, clamped];
@@ -73,9 +69,7 @@ export default function EditorScreen() {
     });
   };
 
-  const undoMarker = () => {
-    setMarkers((prev) => prev.slice(0, -1));
-  };
+  const undoMarker = () => setMarkers((prev) => prev.slice(0, -1));
 
   const clearMarkers = () => {
     if (markers.length === 0) return;
@@ -104,16 +98,14 @@ export default function EditorScreen() {
         display_width: displayWidth,
         display_height: displayHeight,
       });
-
       Alert.alert(
         'Panels Extracted',
         `${result.panel_count} panels saved to "${result.folder_name}"`,
         [
           {
             text: 'View Folder',
-            onPress: () => {
-              router.replace({ pathname: '/folder/[id]', params: { id: result.folder_id } });
-            },
+            onPress: () =>
+              router.replace({ pathname: '/folder/[id]', params: { id: result.folder_id } }),
           },
           { text: 'OK', style: 'cancel' },
         ]
@@ -149,7 +141,6 @@ export default function EditorScreen() {
   return (
     <View style={styles.container}>
       <SafeAreaView style={styles.safeTop} edges={['top']}>
-        {/* Header */}
         <View style={styles.header}>
           <TouchableOpacity
             testID="editor-back-btn"
@@ -202,7 +193,7 @@ export default function EditorScreen() {
           testID="editor-scroll-view"
           onScroll={handleScroll}
           scrollEventThrottle={16}
-          showsVerticalScrollIndicator={true}
+          showsVerticalScrollIndicator
           contentContainerStyle={{ minHeight: displayHeight }}
         >
           <View style={{ width: displayWidth, height: displayHeight, position: 'relative' }}>
@@ -212,10 +203,13 @@ export default function EditorScreen() {
               contentFit="fill"
               cachePolicy="memory-disk"
             />
-            {/* Marker lines */}
+            {/* RGB segmented marker lines */}
             {markers.map((pos, idx) => (
-              <View key={idx} style={[styles.markerLine, { top: pos }]}>
-                <View style={styles.markerLabelContainer}>
+              <View key={idx} style={[styles.markerWrap, { top: pos - 1 }]}>
+                <View style={[styles.markerSeg, { backgroundColor: '#ef4444' }]} />
+                <View style={[styles.markerSeg, { backgroundColor: '#22c55e' }]} />
+                <View style={[styles.markerSeg, { backgroundColor: '#3b82f6' }]} />
+                <View style={styles.markerLabel}>
                   <Text style={styles.markerLabelText}>{idx + 1}</Text>
                 </View>
               </View>
@@ -223,33 +217,33 @@ export default function EditorScreen() {
           </View>
         </ScrollView>
 
-        {/* Center reference line */}
-        <View style={styles.refLineWrap} pointerEvents="none">
+        {/* Reference guide line at 35% from top */}
+        <View
+          style={[styles.refLineWrap, { top: `${MARKER_OFFSET * 100}%` }]}
+          pointerEvents="none"
+        >
           <View style={styles.refLineDash} />
           <View style={styles.refLabelBg}>
             <Text style={styles.refLabelText}>Cut here</Text>
           </View>
         </View>
-      </View>
 
-      {/* Bottom controls */}
-      <SafeAreaView style={styles.bottomBar} edges={['bottom']}>
+        {/* Place Marker FAB — bottom right */}
         <TouchableOpacity
           testID="add-marker-btn"
-          style={styles.addMarkerBtn}
+          style={styles.markerFab}
           onPress={addMarker}
           activeOpacity={0.8}
         >
-          <Feather name="plus" size={20} color={colors.primaryForeground} />
-          <Text style={styles.addMarkerText}>Place Marker</Text>
+          <Feather name="plus" size={22} color={colors.primaryForeground} />
         </TouchableOpacity>
+      </View>
 
+      {/* Bottom bar — process only */}
+      <SafeAreaView style={styles.bottomBar} edges={['bottom']}>
         <TouchableOpacity
           testID="process-btn"
-          style={[
-            styles.processBtn,
-            (markers.length < 2 || isOdd) && styles.processBtnDisabled,
-          ]}
+          style={[styles.processBtn, (markers.length < 2 || isOdd) && styles.processBtnDisabled]}
           onPress={processMarkers}
           disabled={markers.length < 2 || isOdd || processing}
           activeOpacity={0.8}
@@ -271,14 +265,8 @@ export default function EditorScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#000',
-  },
-  safeTop: {
-    backgroundColor: colors.background,
-    zIndex: 10,
-  },
+  container: { flex: 1, backgroundColor: '#000' },
+  safeTop: { backgroundColor: colors.background, zIndex: 10 },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -287,63 +275,32 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
   },
-  headerBtn: {
-    width: 44,
-    height: 44,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  headerCenter: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    paddingLeft: 4,
-  },
-  headerTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: colors.textMain,
-  },
+  headerBtn: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+  headerCenter: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 10, paddingLeft: 4 },
+  headerTitle: { fontSize: 18, fontWeight: '700', color: colors.textMain },
   markerBadge: {
     backgroundColor: colors.surfaceHighlight,
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 12,
   },
-  markerBadgeWarn: {
-    backgroundColor: 'rgba(239,68,68,0.2)',
-  },
-  markerBadgeText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: colors.mutedForeground,
-  },
-  markerBadgeTextWarn: {
-    color: colors.primary,
-  },
-  headerActions: {
-    flexDirection: 'row',
-    gap: 2,
-  },
-  editorBody: {
-    flex: 1,
-    position: 'relative',
-  },
-  markerLine: {
+  markerBadgeWarn: { backgroundColor: 'rgba(239,68,68,0.2)' },
+  markerBadgeText: { fontSize: 12, fontWeight: '600', color: colors.mutedForeground },
+  markerBadgeTextWarn: { color: colors.primary },
+  headerActions: { flexDirection: 'row', gap: 2 },
+  editorBody: { flex: 1, position: 'relative' },
+
+  /* ── RGB marker ── */
+  markerWrap: {
     position: 'absolute',
     left: 0,
     right: 0,
-    height: 2,
-    backgroundColor: colors.markerLine,
+    height: 3,
+    flexDirection: 'row',
     zIndex: 5,
-    shadowColor: colors.markerLine,
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.8,
-    shadowRadius: 6,
-    elevation: 5,
   },
-  markerLabelContainer: {
+  markerSeg: { flex: 1, height: 3 },
+  markerLabel: {
     position: 'absolute',
     right: 8,
     top: -10,
@@ -352,72 +309,57 @@ const styles = StyleSheet.create({
     paddingHorizontal: 7,
     paddingVertical: 2,
   },
-  markerLabelText: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: '#fff',
-  },
+  markerLabelText: { fontSize: 10, fontWeight: '700', color: '#fff' },
+
+  /* ── Reference line ── */
   refLineWrap: {
     position: 'absolute',
     left: 0,
     right: 0,
-    top: '50%',
     flexDirection: 'row',
     alignItems: 'center',
     zIndex: 20,
     transform: [{ translateY: -1 }],
   },
-  refLineDash: {
-    flex: 1,
-    height: 1,
-    borderStyle: 'dashed',
-    borderWidth: 1,
-    borderColor: 'rgba(239,68,68,0.45)',
-  },
+  refLineDash: { flex: 1, height: 1, borderStyle: 'dashed', borderWidth: 1, borderColor: 'rgba(239,68,68,0.45)' },
   refLabelBg: {
     backgroundColor: 'rgba(239,68,68,0.8)',
     paddingHorizontal: 10,
     paddingVertical: 3,
     borderRadius: 8,
-    marginLeft: 6,
-    marginRight: 6,
+    marginHorizontal: 6,
   },
-  refLabelText: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: '#fff',
-    textTransform: 'uppercase',
-    letterSpacing: 0.8,
+  refLabelText: { fontSize: 10, fontWeight: '700', color: '#fff', textTransform: 'uppercase', letterSpacing: 0.8 },
+
+  /* ── Marker FAB ── */
+  markerFab: {
+    position: 'absolute',
+    bottom: 24,
+    right: 20,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 30,
+    elevation: 8,
+    shadowColor: colors.primary,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.5,
+    shadowRadius: 10,
   },
+
+  /* ── Bottom bar ── */
   bottomBar: {
     backgroundColor: colors.background,
     borderTopWidth: 1,
     borderTopColor: colors.border,
-    flexDirection: 'row',
     paddingHorizontal: 16,
     paddingTop: 12,
     paddingBottom: 8,
-    gap: 12,
-  },
-  addMarkerBtn: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    backgroundColor: colors.surfaceHighlight,
-    paddingVertical: 14,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  addMarkerText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: colors.textMain,
   },
   processBtn: {
-    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -426,20 +368,12 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     borderRadius: 10,
   },
-  processBtnDisabled: {
-    backgroundColor: colors.surfaceHighlight,
-    opacity: 0.6,
-  },
+  processBtnDisabled: { backgroundColor: colors.surfaceHighlight, opacity: 0.6 },
   processText: {
     fontSize: 13,
     fontWeight: '700',
     color: colors.primaryForeground,
     letterSpacing: 0.8,
   },
-  errorText: {
-    color: colors.muted,
-    fontSize: 16,
-    textAlign: 'center',
-    marginTop: 80,
-  },
+  errorText: { color: colors.muted, fontSize: 16, textAlign: 'center', marginTop: 80 },
 });
