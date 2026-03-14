@@ -27,6 +27,19 @@ Panel Extractor is a mobile utility app for webtoon/comic enthusiasts. It allows
 - [x] Undo last marker / Clear all markers
 - [x] Dark theme UI optimized for comic viewing
 
+## v2 Features (Implemented)
+- [x] Marker placement at 35% from top (above center for better alignment)
+- [x] Place Marker button as floating FAB at bottom-right (thumb-friendly)
+- [x] RGB segmented marker lines (Red-Green-Blue for visibility)
+- [x] Multi-select mode via long-press
+- [x] Selection toolbar: Move, Copy, Rename, Share, Delete
+- [x] Create Folder modal dialog
+- [x] Rename Folder modal dialog
+- [x] Folder picker for Move/Copy operations
+- [x] Bulk delete (images and folders)
+- [x] Copy images functionality
+- [x] Move images between folders
+
 ## Planned Features (v2)
 - [ ] Google Drive integration for cloud backup
 - [ ] Pinch-to-zoom on editor image
