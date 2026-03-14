@@ -245,9 +245,8 @@ agent_communication:
       6. Complete rewrite of folder/[id].tsx with full selection mode, toolbar (Move/Copy/Rename/Share/Delete), modals
       7. Fixed handlePickFolder to pass targetFolderId to copyItems (was missing!)
       
-      Please test all 7 issues. Focus on:
-      - Long-press on items to enter selection mode
-      - Rename for both folders and images (index.tsx)
-      - Delete confirmation dialogs
-      - folder/[id].tsx new features: long-press panels, selection toolbar, rename panel, rename folder, delete folder with navigation
-      - Copy To action (should now copy to selected folder, not root)
+      ADDITIONAL FIXES after Iteration 4:
+      - Bug 1 FIXED: Alert.alert() is no-op on web. Replaced all delete confirmation flows with custom Modal components in both index.tsx and folder/[id].tsx. New testIDs: cancel-delete-btn, confirm-delete-btn, delete-success-ok-btn
+      - Bug 2 FIXED: copy_items in server.py now sets image_type='panel' when target_folder is set
+      
+      Please test all 7 issues again. The delete flows now use custom modals (testID: confirm-delete-btn to confirm, cancel-delete-btn to cancel, delete-success-ok-btn for success OK).

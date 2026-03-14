@@ -51,6 +51,8 @@ export default function FileManagerScreen() {
   const [renameName, setRenameName] = useState('');
   const [showFolderPicker, setShowFolderPicker] = useState(false);
   const [folderPickerAction, setFolderPickerAction] = useState<'move' | 'copy'>('move');
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [showDeleteSuccess, setShowDeleteSuccess] = useState(false);
 
   const totalSelected = selectedFolders.size + selectedImages.size;
 
@@ -157,28 +159,22 @@ export default function FileManagerScreen() {
   };
 
   const handleDelete = () => {
-    Alert.alert(
-      'Delete Selected',
-      `Delete ${totalSelected} item${totalSelected > 1 ? 's' : ''}? This cannot be undone.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: async () => {
-            await api.bulkDelete(
-              Array.from(selectedImages),
-              Array.from(selectedFolders),
-            );
-            exitSelectMode();
-            loadData();
-            Alert.alert('Deleted successfully', '', [
-              { text: 'OK' },
-            ]);
-          },
-        },
-      ],
-    );
+    setConfirmDelete(true);
+  };
+
+  const executeDelete = async () => {
+    setConfirmDelete(false);
+    try {
+      await api.bulkDelete(
+        Array.from(selectedImages),
+        Array.from(selectedFolders),
+      );
+      exitSelectMode();
+      loadData();
+      setShowDeleteSuccess(true);
+    } catch (e: any) {
+      Alert.alert('Error', e.message);
+    }
   };
 
   const openFolderPicker = (action: 'move' | 'copy') => {
@@ -430,6 +426,40 @@ export default function FileManagerScreen() {
 
       {/* ═══════ Modal Dialogs ═══════ */}
 
+      {/* Delete Confirmation Modal */}
+      <Modal visible={confirmDelete} transparent animationType="fade" onRequestClose={() => setConfirmDelete(false)}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Delete Selected</Text>
+            <Text style={styles.modalMessage}>
+              Delete {totalSelected} item{totalSelected > 1 ? 's' : ''}? This cannot be undone.
+            </Text>
+            <View style={styles.modalActions}>
+              <TouchableOpacity testID="cancel-delete-btn" style={styles.modalBtnSecondary} onPress={() => setConfirmDelete(false)}>
+                <Text style={styles.modalBtnSecText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity testID="confirm-delete-btn" style={styles.modalBtnDestructive} onPress={executeDelete}>
+                <Text style={styles.modalBtnPrimText}>Delete</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Delete Success Modal */}
+      <Modal visible={showDeleteSuccess} transparent animationType="fade" onRequestClose={() => setShowDeleteSuccess(false)}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Deleted successfully</Text>
+            <View style={styles.modalActions}>
+              <TouchableOpacity testID="delete-success-ok-btn" style={styles.modalBtnPrimary} onPress={() => setShowDeleteSuccess(false)}>
+                <Text style={styles.modalBtnPrimText}>OK</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
       {/* Create Folder Modal */}
       <Modal visible={showCreateFolder} transparent animationType="fade" onRequestClose={() => { setShowCreateFolder(false); setNewFolderName(''); }}>
         <View style={styles.modalOverlay}>
@@ -594,6 +624,7 @@ const styles = StyleSheet.create({
     elevation: 20, shadowColor: '#000', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.5, shadowRadius: 20,
   },
   modalTitle: { fontSize: 18, fontWeight: '700', color: colors.textMain, marginBottom: 16 },
+  modalMessage: { fontSize: 14, color: colors.mutedForeground, marginBottom: 4, lineHeight: 20 },
   modalInput: {
     height: 48, borderWidth: 1, borderColor: colors.border, borderRadius: 10,
     paddingHorizontal: 14, fontSize: 15, color: colors.textMain, backgroundColor: colors.background,
@@ -602,6 +633,7 @@ const styles = StyleSheet.create({
   modalBtnSecondary: { paddingHorizontal: 20, paddingVertical: 12, borderRadius: 8, backgroundColor: colors.surfaceHighlight },
   modalBtnSecText: { color: colors.textMain, fontWeight: '600', fontSize: 14 },
   modalBtnPrimary: { paddingHorizontal: 20, paddingVertical: 12, borderRadius: 8, backgroundColor: colors.primary },
+  modalBtnDestructive: { paddingHorizontal: 20, paddingVertical: 12, borderRadius: 8, backgroundColor: '#7f1d1d' },
   modalBtnPrimText: { color: colors.primaryForeground, fontWeight: '700', fontSize: 14 },
 
   /* ── folder picker ── */

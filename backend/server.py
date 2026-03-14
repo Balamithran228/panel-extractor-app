@@ -352,13 +352,14 @@ async def copy_items(req: CopyItemsRequest):
         if src.exists():
             shutil.copy2(str(src), str(dst))
 
+        new_image_type = "panel" if target_folder else doc["image_type"]
         new_doc = {
             "id": new_id,
             "filename": f"Copy_{doc['filename']}",
             "stored_filename": new_stored,
             "width": doc["width"],
             "height": doc["height"],
-            "image_type": doc["image_type"],
+            "image_type": new_image_type,
             "folder_id": target_folder,
             "created_at": datetime.now(timezone.utc).isoformat(),
         }

@@ -42,6 +42,11 @@ export default function FolderViewScreen() {
   const [showFolderPicker, setShowFolderPicker] = useState(false);
   const [folderPickerAction, setFolderPickerAction] = useState<'move' | 'copy'>('move');
   const [availableFolders, setAvailableFolders] = useState<FolderData[]>([]);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleteMessage, setDeleteMessage] = useState('');
+  const [pendingDeleteFn, setPendingDeleteFn] = useState<(() => Promise<void>) | null>(null);
+  const [showDeleteSuccess, setShowDeleteSuccess] = useState(false);
+  const [deleteFolderMode, setDeleteFolderMode] = useState(false);
 
   const loadFolder = useCallback(async () => {
     if (!id) return;
@@ -100,53 +105,43 @@ export default function FolderViewScreen() {
   /* ── Delete panels (selection) ── */
   const handleDeletePanels = () => {
     const count = selectedPanels.size;
-    Alert.alert(
-      'Delete Panels',
-      `Delete ${count} panel${count > 1 ? 's' : ''}? This cannot be undone.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await api.bulkDelete(Array.from(selectedPanels), []);
-              exitSelectMode();
-              await loadFolder();
-              Alert.alert('Deleted successfully');
-            } catch (e: any) {
-              Alert.alert('Error', e.message);
-            }
-          },
-        },
-      ]
-    );
+    setDeleteMessage(`Delete ${count} panel${count > 1 ? 's' : ''}? This cannot be undone.`);
+    setDeleteFolderMode(false);
+    setPendingDeleteFn(() => async () => {
+      await api.bulkDelete(Array.from(selectedPanels), []);
+      exitSelectMode();
+      await loadFolder();
+    });
+    setConfirmDelete(true);
   };
 
   /* ── Delete folder ── */
   const deleteThisFolder = () => {
     if (!folder) return;
-    Alert.alert(
-      'Delete Folder',
-      `Delete "${folder.name}" and all ${folder.panels.length} panels? This cannot be undone.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await api.deleteFolder(folder.id);
-              Alert.alert('Deleted successfully', '', [
-                { text: 'OK', onPress: () => router.replace('/') },
-              ]);
-            } catch (e: any) {
-              Alert.alert('Error', e.message);
-            }
-          },
-        },
-      ]
-    );
+    setDeleteMessage(`Delete "${folder.name}" and all ${folder.panels.length} panels? This cannot be undone.`);
+    setDeleteFolderMode(true);
+    setPendingDeleteFn(() => async () => {
+      await api.deleteFolder(folder.id);
+    });
+    setConfirmDelete(true);
+  };
+
+  const executeDelete = async () => {
+    setConfirmDelete(false);
+    try {
+      await pendingDeleteFn?.();
+      setPendingDeleteFn(null);
+      setShowDeleteSuccess(true);
+    } catch (e: any) {
+      Alert.alert('Error', e.message);
+    }
+  };
+
+  const onDeleteSuccessOK = () => {
+    setShowDeleteSuccess(false);
+    if (deleteFolderMode) {
+      router.replace('/');
+    }
   };
 
   /* ── Rename ── */
@@ -374,6 +369,38 @@ export default function FolderViewScreen() {
 
       {/* ═══ Modal Dialogs ═══ */}
 
+      {/* Delete Confirmation Modal */}
+      <Modal visible={confirmDelete} transparent animationType="fade" onRequestClose={() => setConfirmDelete(false)}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>{deleteFolderMode ? 'Delete Folder' : 'Delete Panels'}</Text>
+            <Text style={styles.modalMessage}>{deleteMessage}</Text>
+            <View style={styles.modalActions}>
+              <TouchableOpacity testID="cancel-delete-btn" style={styles.modalBtnSecondary} onPress={() => setConfirmDelete(false)}>
+                <Text style={styles.modalBtnSecText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity testID="confirm-delete-btn" style={styles.modalBtnDestructive} onPress={executeDelete}>
+                <Text style={styles.modalBtnPrimText}>Delete</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Delete Success Modal */}
+      <Modal visible={showDeleteSuccess} transparent animationType="fade" onRequestClose={onDeleteSuccessOK}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Deleted successfully</Text>
+            <View style={styles.modalActions}>
+              <TouchableOpacity testID="delete-success-ok-btn" style={styles.modalBtnPrimary} onPress={onDeleteSuccessOK}>
+                <Text style={styles.modalBtnPrimText}>OK</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
       {/* Rename Modal */}
       <Modal
         visible={renameTarget !== null}
@@ -577,6 +604,7 @@ const styles = StyleSheet.create({
     shadowRadius: 20,
   },
   modalTitle: { fontSize: 18, fontWeight: '700', color: colors.textMain, marginBottom: 16 },
+  modalMessage: { fontSize: 14, color: colors.mutedForeground, marginBottom: 4, lineHeight: 20 },
   modalInput: {
     height: 48,
     borderWidth: 1,
@@ -591,6 +619,7 @@ const styles = StyleSheet.create({
   modalBtnSecondary: { paddingHorizontal: 20, paddingVertical: 12, borderRadius: 8, backgroundColor: colors.surfaceHighlight },
   modalBtnSecText: { color: colors.textMain, fontWeight: '600', fontSize: 14 },
   modalBtnPrimary: { paddingHorizontal: 20, paddingVertical: 12, borderRadius: 8, backgroundColor: colors.primary },
+  modalBtnDestructive: { paddingHorizontal: 20, paddingVertical: 12, borderRadius: 8, backgroundColor: '#7f1d1d' },
   modalBtnPrimText: { color: colors.primaryForeground, fontWeight: '700', fontSize: 14 },
 
   /* ── Folder picker ── */
