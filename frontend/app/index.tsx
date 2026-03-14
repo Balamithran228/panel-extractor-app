@@ -9,11 +9,9 @@ import {
   ActivityIndicator,
   RefreshControl,
   Dimensions,
-  Modal,
   TextInput,
   Share,
-  KeyboardAvoidingView,
-  Platform,
+  Modal,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useFocusEffect } from 'expo-router';
@@ -325,8 +323,9 @@ export default function FileManagerScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.container} edges={['top']}>
-      {/* ─── Header ─── */}
+    <View style={styles.rootWrap}>
+      <SafeAreaView style={styles.container} edges={['top']}>
+        {/* ─── Header ─── */}
       {selectMode ? (
         <View style={styles.selectHeader}>
           <TouchableOpacity testID="exit-select-btn" onPress={exitSelectMode} style={styles.headerBtn}>
@@ -404,12 +403,13 @@ export default function FileManagerScreen() {
           )}
         </TouchableOpacity>
       )}
+      </SafeAreaView>
 
-      {/* ═══════ Modals ═══════ */}
+      {/* ═══════ Modal Dialogs ═══════ */}
 
       {/* Create Folder Modal */}
-      <Modal visible={showCreateFolder} transparent animationType="fade">
-        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.modalOverlay}>
+      <Modal visible={showCreateFolder} transparent animationType="fade" onRequestClose={() => { setShowCreateFolder(false); setNewFolderName(''); }}>
+        <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>New Folder</Text>
             <TextInput
@@ -419,7 +419,6 @@ export default function FileManagerScreen() {
               placeholderTextColor={colors.muted}
               value={newFolderName}
               onChangeText={setNewFolderName}
-              autoFocus
             />
             <View style={styles.modalActions}>
               <TouchableOpacity testID="cancel-create-btn" style={styles.modalBtnSecondary} onPress={() => { setShowCreateFolder(false); setNewFolderName(''); }}>
@@ -430,12 +429,12 @@ export default function FileManagerScreen() {
               </TouchableOpacity>
             </View>
           </View>
-        </KeyboardAvoidingView>
+        </View>
       </Modal>
 
       {/* Rename Folder Modal */}
-      <Modal visible={renameTarget !== null} transparent animationType="fade">
-        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.modalOverlay}>
+      <Modal visible={renameTarget !== null} transparent animationType="fade" onRequestClose={() => { setRenameTarget(null); setRenameName(''); }}>
+        <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>Rename Folder</Text>
             <TextInput
@@ -445,7 +444,6 @@ export default function FileManagerScreen() {
               placeholderTextColor={colors.muted}
               value={renameName}
               onChangeText={setRenameName}
-              autoFocus
             />
             <View style={styles.modalActions}>
               <TouchableOpacity testID="cancel-rename-btn" style={styles.modalBtnSecondary} onPress={() => { setRenameTarget(null); setRenameName(''); }}>
@@ -456,11 +454,11 @@ export default function FileManagerScreen() {
               </TouchableOpacity>
             </View>
           </View>
-        </KeyboardAvoidingView>
+        </View>
       </Modal>
 
-      {/* Folder Picker Modal (for move / copy) */}
-      <Modal visible={showFolderPicker} transparent animationType="slide">
+      {/* Folder Picker Modal */}
+      <Modal visible={showFolderPicker} transparent animationType="slide" onRequestClose={() => setShowFolderPicker(false)}>
         <View style={styles.pickerOverlay}>
           <View style={styles.pickerCard}>
             <View style={styles.pickerHeader}>
@@ -471,44 +469,33 @@ export default function FileManagerScreen() {
                 <Feather name="x" size={22} color={colors.textMain} />
               </TouchableOpacity>
             </View>
-
-            <TouchableOpacity
-              testID="pick-root-btn"
-              style={styles.pickerRow}
-              onPress={() => handlePickFolder(null)}
-            >
+            <TouchableOpacity testID="pick-root-btn" style={styles.pickerRow} onPress={() => handlePickFolder(null)}>
               <Feather name="home" size={20} color={colors.textMain} />
               <Text style={styles.pickerRowText}>Root (no folder)</Text>
             </TouchableOpacity>
-
             <FlatList
               data={folders}
               keyExtractor={(f) => f.id}
               renderItem={({ item: f }) => (
-                <TouchableOpacity
-                  testID={`pick-folder-${f.id}`}
-                  style={styles.pickerRow}
-                  onPress={() => handlePickFolder(f.id)}
-                >
+                <TouchableOpacity testID={`pick-folder-${f.id}`} style={styles.pickerRow} onPress={() => handlePickFolder(f.id)}>
                   <Feather name="folder" size={20} color={colors.primary} />
                   <Text style={styles.pickerRowText}>{f.name}</Text>
                   <Text style={styles.pickerRowMeta}>{f.panel_count}</Text>
                 </TouchableOpacity>
               )}
-              ListEmptyComponent={
-                <Text style={styles.pickerEmpty}>No folders available</Text>
-              }
+              ListEmptyComponent={<Text style={styles.pickerEmpty}>No folders available</Text>}
             />
           </View>
         </View>
       </Modal>
-    </SafeAreaView>
+    </View>
   );
 }
 
 /* ══════════════════════════════ styles ══════════════════════════════ */
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
+  rootWrap: { flex: 1, backgroundColor: colors.background },
 
   /* ── headers ── */
   header: {
@@ -574,11 +561,14 @@ const styles = StyleSheet.create({
   },
   fabText: { color: colors.primaryForeground, fontWeight: '700', fontSize: 15 },
 
-  /* ── modals ── */
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'center', alignItems: 'center' },
+  /* ── modals (absolute overlay) ── */
+  modalOverlay: {
+    flex: 1, backgroundColor: 'rgba(0,0,0,0.85)', justifyContent: 'center', alignItems: 'center',
+  },
   modalCard: {
-    width: SCREEN_W - 48, backgroundColor: colors.surface, borderRadius: 16,
-    padding: 24, borderWidth: 1, borderColor: colors.border,
+    width: SCREEN_W - 48, backgroundColor: '#27272a', borderRadius: 16,
+    padding: 24, borderWidth: 1, borderColor: '#52525b',
+    elevation: 20, shadowColor: '#000', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.5, shadowRadius: 20,
   },
   modalTitle: { fontSize: 18, fontWeight: '700', color: colors.textMain, marginBottom: 16 },
   modalInput: {
@@ -592,7 +582,9 @@ const styles = StyleSheet.create({
   modalBtnPrimText: { color: colors.primaryForeground, fontWeight: '700', fontSize: 14 },
 
   /* ── folder picker ── */
-  pickerOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' },
+  pickerOverlay: {
+    flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end',
+  },
   pickerCard: {
     backgroundColor: colors.surface, borderTopLeftRadius: 20, borderTopRightRadius: 20,
     maxHeight: '60%', paddingBottom: 32,

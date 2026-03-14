@@ -1,6 +1,13 @@
 import pytest
 import requests
 import os
+from pathlib import Path
+from dotenv import load_dotenv
+
+# Load frontend .env for EXPO_PUBLIC_BACKEND_URL
+frontend_env = Path(__file__).parent.parent.parent / "frontend" / ".env"
+if frontend_env.exists():
+    load_dotenv(frontend_env)
 
 @pytest.fixture(scope="session")
 def base_url():
