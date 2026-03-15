@@ -7,161 +7,204 @@ import {
   FlatList,
   Alert,
   ActivityIndicator,
+  RefreshControl,
   Dimensions,
+  TextInput,
   Share,
   Modal,
-  TextInput,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import { colors } from '@/utils/theme';
-import { api, FolderDetail, FolderData, ImageData } from '@/utils/api';
+import { db, FolderDetail, ImageData, FolderData, getImageUri } from '@/utils/db';
 
-const SCREEN_W = Dimensions.get('window').width;
-const GRID_GAP = 10;
-const COLUMNS = 2;
-const THUMB_W = (SCREEN_W - 32 - GRID_GAP * (COLUMNS - 1)) / COLUMNS;
+const { width: SCREEN_W } = Dimensions.get('window');
+const THUMB_SIZE = (SCREEN_W - 48) / 3;
 
-export default function FolderViewScreen() {
+export default function FolderScreen() {
   const router = useRouter();
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id: folderId } = useLocalSearchParams<{ id: string }>();
 
-  const [folder, setFolder] = useState<FolderDetail | null>(null);
+  const [folderDetail, setFolderDetail] = useState<FolderDetail | null>(null);
   const [loading, setLoading] = useState(true);
-  const [selectedPanel, setSelectedPanel] = useState<ImageData | null>(null);
-
-  // Selection mode
+  const [refreshing, setRefreshing] = useState(false);
   const [selectMode, setSelectMode] = useState(false);
   const [selectedPanels, setSelectedPanels] = useState<Set<string>>(new Set());
 
-  // Modals
-  const [renameTarget, setRenameTarget] = useState<{ id: string; name: string; isFolderRename: boolean } | null>(null);
+  /* modals */
+  const [renameTarget, setRenameTarget] = useState<{ id: string; name: string } | null>(null);
   const [renameName, setRenameName] = useState('');
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [showDeleteSuccess, setShowDeleteSuccess] = useState(false);
   const [showFolderPicker, setShowFolderPicker] = useState(false);
   const [folderPickerAction, setFolderPickerAction] = useState<'move' | 'copy'>('move');
   const [availableFolders, setAvailableFolders] = useState<FolderData[]>([]);
-  const [confirmDelete, setConfirmDelete] = useState(false);
-  const [deleteMessage, setDeleteMessage] = useState('');
-  const [pendingDeleteFn, setPendingDeleteFn] = useState<(() => Promise<void>) | null>(null);
-  const [showDeleteSuccess, setShowDeleteSuccess] = useState(false);
-  const [deleteFolderMode, setDeleteFolderMode] = useState(false);
+  const [previewPanel, setPreviewPanel] = useState<ImageData | null>(null);
 
+  /* panel context menu */
+  const [contextPanel, setContextPanel] = useState<ImageData | null>(null);
+  const [ctxConfirmDelete, setCtxConfirmDelete] = useState(false);
+  const [ctxFolderPicker, setCtxFolderPicker] = useState(false);
+  const [ctxFolderAction, setCtxFolderAction] = useState<'move' | 'copy'>('copy');
+  const [ctxAvailableFolders, setCtxAvailableFolders] = useState<FolderData[]>([]);
+  const [ctxRenameTarget, setCtxRenameTarget] = useState<{ id: string; name: string } | null>(null);
+  const [ctxRenameName, setCtxRenameName] = useState('');
+
+  const totalSelected = selectedPanels.size;
+
+  /* ── Load data ── */
   const loadFolder = useCallback(async () => {
-    if (!id) return;
+    if (!folderId) return;
     try {
-      const f = await api.getFolder(id);
-      setFolder(f);
+      const detail = await db.getFolder(folderId);
+      setFolderDetail(detail);
     } catch (e: any) {
       Alert.alert('Error', e.message);
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
-  }, [id]);
+  }, [folderId]);
 
   useFocusEffect(useCallback(() => { loadFolder(); }, [loadFolder]));
+
+  const onRefresh = () => { setRefreshing(true); loadFolder(); };
 
   const exitSelectMode = () => {
     setSelectMode(false);
     setSelectedPanels(new Set());
   };
 
-  const togglePanelSelect = (panelId: string) => {
+  const togglePanel = (id: string) => {
     setSelectedPanels((prev) => {
       const next = new Set(prev);
-      if (next.has(panelId)) next.delete(panelId); else next.add(panelId);
+      if (next.has(id)) next.delete(id); else next.add(id);
       return next;
     });
   };
 
-  const enterSelectWith = (panel: ImageData) => {
+  const enterSelectWith = (item: ImageData) => {
     setSelectMode(true);
-    setSelectedPanels(new Set([panel.id]));
+    setSelectedPanels(new Set([item.id]));
   };
 
-  /* ── Share ── */
-  const sharePanel = async (panel: ImageData) => {
+  /* ── Panel context menu ── */
+  const openPanelContextMenu = (panel: ImageData) => {
+    setContextPanel(panel);
+  };
+
+  const closePanelContextMenu = () => setContextPanel(null);
+
+  const ctxRename = () => {
+    if (!contextPanel) return;
+    setCtxRenameName(contextPanel.filename);
+    setCtxRenameTarget({ id: contextPanel.id, name: contextPanel.filename });
+    closePanelContextMenu();
+  };
+
+  const handleCtxRename = async () => {
+    if (!ctxRenameTarget) return;
+    const name = ctxRenameName.trim();
+    if (!name) return;
     try {
-      await Share.share({ message: api.getImageUrl(panel.id), title: panel.filename });
-    } catch (_) {}
+      await db.renameImage(ctxRenameTarget.id, name);
+      setCtxRenameTarget(null);
+      setCtxRenameName('');
+      loadFolder();
+    } catch (e: any) {
+      Alert.alert('Error', e.message);
+    }
   };
 
-  const shareAll = async () => {
-    if (!folder) return;
-    const urls = folder.panels.map((p) => api.getImageUrl(p.id)).join('\n');
+  const ctxDelete = () => {
+    setCtxConfirmDelete(true);
+  };
+
+  const executeCtxDelete = async () => {
+    setCtxConfirmDelete(false);
+    if (!contextPanel) return;
     try {
-      await Share.share({ message: `${folder.name}\n\n${urls}`, title: folder.name });
-    } catch (_) {}
-  };
-
-  const handleShareSelected = async () => {
-    const urls = Array.from(selectedPanels).map((pid) => api.getImageUrl(pid)).join('\n');
-    try {
-      await Share.share({ message: urls });
-    } catch (_) {}
-  };
-
-  /* ── Delete panels (selection) ── */
-  const handleDeletePanels = () => {
-    const count = selectedPanels.size;
-    setDeleteMessage(`Delete ${count} panel${count > 1 ? 's' : ''}? This cannot be undone.`);
-    setDeleteFolderMode(false);
-    setPendingDeleteFn(() => async () => {
-      await api.bulkDelete(Array.from(selectedPanels), []);
-      exitSelectMode();
-      await loadFolder();
-    });
-    setConfirmDelete(true);
-  };
-
-  /* ── Delete folder ── */
-  const deleteThisFolder = () => {
-    if (!folder) return;
-    setDeleteMessage(`Delete "${folder.name}" and all ${folder.panels.length} panels? This cannot be undone.`);
-    setDeleteFolderMode(true);
-    setPendingDeleteFn(() => async () => {
-      await api.deleteFolder(folder.id);
-    });
-    setConfirmDelete(true);
-  };
-
-  const executeDelete = async () => {
-    setConfirmDelete(false);
-    try {
-      await pendingDeleteFn?.();
-      setPendingDeleteFn(null);
+      await db.deleteImage(contextPanel.id);
+      setContextPanel(null);
+      loadFolder();
       setShowDeleteSuccess(true);
     } catch (e: any) {
       Alert.alert('Error', e.message);
     }
   };
 
-  const onDeleteSuccessOK = () => {
-    setShowDeleteSuccess(false);
-    if (deleteFolderMode) {
-      router.replace('/');
+  const ctxCopyTo = async () => {
+    try {
+      const folders = await db.listFolders();
+      setCtxAvailableFolders(folders);
+      setCtxFolderAction('copy');
+      setCtxFolderPicker(true);
+    } catch (e: any) {
+      Alert.alert('Error', e.message);
     }
   };
 
-  /* ── Rename ── */
+  const ctxMoveTo = async () => {
+    try {
+      const folders = await db.listFolders();
+      setCtxAvailableFolders(folders);
+      setCtxFolderAction('move');
+      setCtxFolderPicker(true);
+    } catch (e: any) {
+      Alert.alert('Error', e.message);
+    }
+  };
+
+  const handleCtxPickFolder = async (targetFolderId: string | null) => {
+    setCtxFolderPicker(false);
+    if (!contextPanel) return;
+    try {
+      if (ctxFolderAction === 'move') {
+        await db.moveItems([contextPanel.id], targetFolderId);
+      } else {
+        await db.copyItems([contextPanel.id], targetFolderId);
+      }
+      setContextPanel(null);
+      loadFolder();
+    } catch (e: any) {
+      Alert.alert('Error', e.message);
+    }
+  };
+
+  const ctxSelect = () => {
+    if (!contextPanel) return;
+    enterSelectWith(contextPanel);
+    closePanelContextMenu();
+  };
+
+  /* ── Multi-select actions ── */
+  const handleDeletePanels = () => { setConfirmDelete(true); };
+
+  const executeDelete = async () => {
+    setConfirmDelete(false);
+    try {
+      await db.bulkDelete(Array.from(selectedPanels), []);
+      exitSelectMode();
+      loadFolder();
+      setShowDeleteSuccess(true);
+    } catch (e: any) {
+      Alert.alert('Error', e.message);
+    }
+  };
+
   const handleRenameAction = () => {
     if (selectedPanels.size !== 1) {
       Alert.alert('Rename', 'Select exactly one panel to rename.');
       return;
     }
     const pid = Array.from(selectedPanels)[0];
-    const panel = folder?.panels.find((p) => p.id === pid);
+    const panel = folderDetail?.panels.find((p) => p.id === pid);
     if (panel) {
       setRenameName(panel.filename);
-      setRenameTarget({ id: panel.id, name: panel.filename, isFolderRename: false });
+      setRenameTarget({ id: panel.id, name: panel.filename });
     }
-  };
-
-  const openFolderRename = () => {
-    if (!folder) return;
-    setRenameName(folder.name);
-    setRenameTarget({ id: folder.id, name: folder.name, isFolderRename: true });
   };
 
   const handleRename = async () => {
@@ -169,25 +212,20 @@ export default function FolderViewScreen() {
     const name = renameName.trim();
     if (!name) return;
     try {
-      if (renameTarget.isFolderRename) {
-        await api.renameFolder(renameTarget.id, name);
-      } else {
-        await api.renameImage(renameTarget.id, name);
-      }
+      await db.renameImage(renameTarget.id, name);
       setRenameTarget(null);
       setRenameName('');
       exitSelectMode();
-      await loadFolder();
+      loadFolder();
     } catch (e: any) {
       Alert.alert('Error', e.message);
     }
   };
 
-  /* ── Move / Copy ── */
   const openFolderPicker = async (action: 'move' | 'copy') => {
     if (selectedPanels.size === 0) return;
     try {
-      const folders = await api.listFolders();
+      const folders = await db.listFolders();
       setAvailableFolders(folders);
       setFolderPickerAction(action);
       setShowFolderPicker(true);
@@ -201,46 +239,52 @@ export default function FolderViewScreen() {
     const ids = Array.from(selectedPanels);
     try {
       if (folderPickerAction === 'move') {
-        await api.moveItems(ids, targetFolderId);
+        await db.moveItems(ids, targetFolderId);
       } else {
-        await api.copyItems(ids, targetFolderId);
+        await db.copyItems(ids, targetFolderId);
       }
-      exitSelectMode();
-      await loadFolder();
     } catch (e: any) {
       Alert.alert('Error', e.message);
     }
+    exitSelectMode();
+    loadFolder();
   };
 
-  /* ── Render panel card ── */
-  const renderPanel = ({ item, index }: { item: ImageData; index: number }) => {
-    const imageUrl = api.getImageUrl(item.id);
-    const thumbH = (item.height / item.width) * THUMB_W;
-    const clampedH = Math.min(thumbH, THUMB_W * 2);
-    const isSelected = selectedPanels.has(item.id);
+  const handleShare = async () => {
+    const urls: string[] = [];
+    for (const id of selectedPanels) {
+      const panel = folderDetail?.panels.find((p) => p.id === id);
+      if (panel) urls.push(getImageUri(panel.id, panel.stored_filename, panel.image_type, panel.folder_id));
+    }
+    try {
+      await Share.share({ message: urls.join('\n'), title: 'Panel Extractor' });
+    } catch (_e) { /* user cancelled */ }
+  };
 
+  /* ── render panel cell ── */
+  const renderPanel = ({ item }: { item: ImageData }) => {
+    const selected = selectedPanels.has(item.id);
+    const panelUri = getImageUri(item.id, item.stored_filename, item.image_type, item.folder_id);
     return (
       <TouchableOpacity
-        testID={`panel-card-${index}`}
-        style={[styles.panelCard, { width: THUMB_W }, isSelected && styles.panelCardSelected]}
+        testID={`panel-card-${item.id}`}
+        style={[styles.panelCell, selected && styles.panelCellSelected]}
         onPress={() => {
-          if (selectMode) togglePanelSelect(item.id);
-          else setSelectedPanel(item);
+          if (selectMode) togglePanel(item.id);
+          else setPreviewPanel(item);
         }}
-        onLongPress={() => enterSelectWith(item)}
-        activeOpacity={0.8}
+        onLongPress={() => openPanelContextMenu(item)}
+        activeOpacity={0.7}
       >
         {selectMode && (
-          <View style={[styles.checkbox, isSelected && styles.checkboxChecked]}>
-            {isSelected && <Feather name="check" size={12} color="#fff" />}
+          <View style={[styles.checkbox, selected && styles.checkboxChecked]}>
+            {selected && <Feather name="check" size={14} color="#fff" />}
           </View>
         )}
-        <Image
-          source={{ uri: imageUrl }}
-          style={{ width: THUMB_W - 2, height: clampedH, borderRadius: 8 }}
-          contentFit="cover"
-        />
-        <Text style={styles.panelLabel}>{item.filename}</Text>
+        <Image source={{ uri: panelUri }} style={styles.panelThumb} contentFit="cover" />
+        <View style={styles.panelLabel}>
+          <Text style={styles.panelLabelText} numberOfLines={1}>{item.filename}</Text>
+        </View>
       </TouchableOpacity>
     );
   };
@@ -253,10 +297,10 @@ export default function FolderViewScreen() {
     );
   }
 
-  if (!folder) {
+  if (!folderDetail) {
     return (
       <SafeAreaView style={styles.container}>
-        <Text style={styles.errorText}>Folder not found</Text>
+        <Text style={{ color: colors.muted, textAlign: 'center', marginTop: 80 }}>Folder not found</Text>
       </SafeAreaView>
     );
   }
@@ -270,7 +314,7 @@ export default function FolderViewScreen() {
             <TouchableOpacity testID="exit-select-btn" onPress={exitSelectMode} style={styles.headerBtn}>
               <Feather name="x" size={24} color={colors.textMain} />
             </TouchableOpacity>
-            <Text style={styles.selectCount}>{selectedPanels.size} selected</Text>
+            <Text style={styles.selectCount}>{totalSelected} selected</Text>
             <View style={{ flex: 1 }} />
           </View>
         ) : (
@@ -279,40 +323,30 @@ export default function FolderViewScreen() {
               <Feather name="chevron-left" size={24} color={colors.textMain} />
             </TouchableOpacity>
             <View style={styles.headerCenter}>
-              <Text style={styles.headerTitle} numberOfLines={1}>{folder.name}</Text>
-              <Text style={styles.headerSub}>{folder.panels.length} panels</Text>
-            </View>
-            <View style={styles.headerActions}>
-              <TouchableOpacity testID="rename-folder-btn" onPress={openFolderRename} style={styles.headerBtn}>
-                <Feather name="edit-3" size={19} color={colors.textMain} />
-              </TouchableOpacity>
-              <TouchableOpacity testID="share-all-btn" onPress={shareAll} style={styles.headerBtn}>
-                <Feather name="share-2" size={20} color={colors.textMain} />
-              </TouchableOpacity>
-              <TouchableOpacity testID="delete-folder-btn" onPress={deleteThisFolder} style={styles.headerBtn}>
-                <Feather name="trash-2" size={20} color={colors.primary} />
-              </TouchableOpacity>
+              <Text style={styles.headerTitle} numberOfLines={1}>{folderDetail.name}</Text>
+              <Text style={styles.headerSub}>{folderDetail.panels.length} panels</Text>
             </View>
           </View>
         )}
 
-        {/* ─── Panels grid ─── */}
-        {folder.panels.length === 0 ? (
-          <View style={styles.emptyState}>
-            <Feather name="image" size={48} color={colors.muted} />
-            <Text style={styles.emptyText}>No panels extracted</Text>
-          </View>
-        ) : (
-          <FlatList
-            testID="panels-grid"
-            data={folder.panels}
-            renderItem={renderPanel}
-            keyExtractor={(p) => p.id}
-            numColumns={COLUMNS}
-            columnWrapperStyle={styles.gridRow}
-            contentContainerStyle={styles.gridContent}
-          />
-        )}
+        {/* ─── FlatList grid ─── */}
+        <FlatList
+          testID="panels-grid"
+          data={folderDetail.panels}
+          numColumns={3}
+          renderItem={renderPanel}
+          keyExtractor={(p) => p.id}
+          contentContainerStyle={styles.gridContent}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} colors={[colors.primary]} />
+          }
+          ListEmptyComponent={
+            <View style={styles.emptyWrap}>
+              <Feather name="image" size={48} color={colors.muted} />
+              <Text style={styles.emptyText}>No panels yet</Text>
+            </View>
+          }
+        />
 
         {/* ─── Selection toolbar ─── */}
         {selectMode && (
@@ -329,7 +363,7 @@ export default function FolderViewScreen() {
               <Feather name="edit-3" size={20} color={colors.textMain} />
               <Text style={styles.selActionText}>Rename</Text>
             </TouchableOpacity>
-            <TouchableOpacity testID="sel-share-btn" style={styles.selAction} onPress={handleShareSelected}>
+            <TouchableOpacity testID="sel-share-btn" style={styles.selAction} onPress={handleShare}>
               <Feather name="share-2" size={20} color={colors.textMain} />
               <Text style={styles.selActionText}>Share</Text>
             </TouchableOpacity>
@@ -339,42 +373,18 @@ export default function FolderViewScreen() {
             </TouchableOpacity>
           </View>
         )}
-
-        {/* ─── Full screen preview ─── */}
-        {selectedPanel && (
-          <View style={styles.previewOverlay}>
-            <SafeAreaView style={styles.previewSafe}>
-              <View style={styles.previewHeader}>
-                <Text style={styles.previewTitle}>{selectedPanel.filename}</Text>
-                <View style={styles.previewActions}>
-                  <TouchableOpacity testID="preview-share-btn" onPress={() => sharePanel(selectedPanel)} style={styles.previewBtn}>
-                    <Feather name="share-2" size={20} color="#fff" />
-                  </TouchableOpacity>
-                  <TouchableOpacity testID="preview-close-btn" onPress={() => setSelectedPanel(null)} style={styles.previewBtn}>
-                    <Feather name="x" size={24} color="#fff" />
-                  </TouchableOpacity>
-                </View>
-              </View>
-              <View style={styles.previewBody}>
-                <Image
-                  source={{ uri: api.getImageUrl(selectedPanel.id) }}
-                  style={styles.previewImage}
-                  contentFit="contain"
-                />
-              </View>
-            </SafeAreaView>
-          </View>
-        )}
       </SafeAreaView>
 
-      {/* ═══ Modal Dialogs ═══ */}
+      {/* ═══════ Modal Dialogs ═══════ */}
 
-      {/* Delete Confirmation Modal */}
+      {/* Delete Confirmation */}
       <Modal visible={confirmDelete} transparent animationType="fade" onRequestClose={() => setConfirmDelete(false)}>
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>{deleteFolderMode ? 'Delete Folder' : 'Delete Panels'}</Text>
-            <Text style={styles.modalMessage}>{deleteMessage}</Text>
+            <Text style={styles.modalTitle}>Delete Panels</Text>
+            <Text style={styles.modalMessage}>
+              Delete {totalSelected} panel{totalSelected > 1 ? 's' : ''}? This cannot be undone.
+            </Text>
             <View style={styles.modalActions}>
               <TouchableOpacity testID="cancel-delete-btn" style={styles.modalBtnSecondary} onPress={() => setConfirmDelete(false)}>
                 <Text style={styles.modalBtnSecText}>Cancel</Text>
@@ -387,13 +397,13 @@ export default function FolderViewScreen() {
         </View>
       </Modal>
 
-      {/* Delete Success Modal */}
-      <Modal visible={showDeleteSuccess} transparent animationType="fade" onRequestClose={onDeleteSuccessOK}>
+      {/* Delete Success */}
+      <Modal visible={showDeleteSuccess} transparent animationType="fade" onRequestClose={() => setShowDeleteSuccess(false)}>
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>Deleted successfully</Text>
             <View style={styles.modalActions}>
-              <TouchableOpacity testID="delete-success-ok-btn" style={styles.modalBtnPrimary} onPress={onDeleteSuccessOK}>
+              <TouchableOpacity testID="delete-success-ok-btn" style={styles.modalBtnPrimary} onPress={() => setShowDeleteSuccess(false)}>
                 <Text style={styles.modalBtnPrimText}>OK</Text>
               </TouchableOpacity>
             </View>
@@ -402,39 +412,23 @@ export default function FolderViewScreen() {
       </Modal>
 
       {/* Rename Modal */}
-      <Modal
-        visible={renameTarget !== null}
-        transparent
-        animationType="fade"
-        onRequestClose={() => { setRenameTarget(null); setRenameName(''); }}
-      >
+      <Modal visible={renameTarget !== null} transparent animationType="fade" onRequestClose={() => { setRenameTarget(null); setRenameName(''); }}>
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>
-              Rename {renameTarget?.isFolderRename ? 'Folder' : 'Panel'}
-            </Text>
+            <Text style={styles.modalTitle}>Rename Panel</Text>
             <TextInput
-              testID="rename-input"
+              testID="rename-panel-input"
               style={styles.modalInput}
               placeholder="New name"
               placeholderTextColor={colors.muted}
               value={renameName}
               onChangeText={setRenameName}
-              autoFocus
             />
             <View style={styles.modalActions}>
-              <TouchableOpacity
-                testID="cancel-rename-btn"
-                style={styles.modalBtnSecondary}
-                onPress={() => { setRenameTarget(null); setRenameName(''); }}
-              >
+              <TouchableOpacity testID="cancel-rename-btn" style={styles.modalBtnSecondary} onPress={() => { setRenameTarget(null); setRenameName(''); }}>
                 <Text style={styles.modalBtnSecText}>Cancel</Text>
               </TouchableOpacity>
-              <TouchableOpacity
-                testID="confirm-rename-btn"
-                style={styles.modalBtnPrimary}
-                onPress={handleRename}
-              >
+              <TouchableOpacity testID="confirm-rename-btn" style={styles.modalBtnPrimary} onPress={handleRename}>
                 <Text style={styles.modalBtnPrimText}>Rename</Text>
               </TouchableOpacity>
             </View>
@@ -442,19 +436,12 @@ export default function FolderViewScreen() {
         </View>
       </Modal>
 
-      {/* Folder Picker Modal */}
-      <Modal
-        visible={showFolderPicker}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setShowFolderPicker(false)}
-      >
+      {/* Folder Picker */}
+      <Modal visible={showFolderPicker} transparent animationType="slide" onRequestClose={() => setShowFolderPicker(false)}>
         <View style={styles.pickerOverlay}>
           <View style={styles.pickerCard}>
             <View style={styles.pickerHeader}>
-              <Text style={styles.pickerTitle}>
-                {folderPickerAction === 'move' ? 'Move to' : 'Copy to'}
-              </Text>
+              <Text style={styles.pickerTitle}>{folderPickerAction === 'move' ? 'Move to' : 'Copy to'}</Text>
               <TouchableOpacity testID="close-picker-btn" onPress={() => setShowFolderPicker(false)}>
                 <Feather name="x" size={22} color={colors.textMain} />
               </TouchableOpacity>
@@ -463,11 +450,121 @@ export default function FolderViewScreen() {
               data={availableFolders}
               keyExtractor={(f) => f.id}
               renderItem={({ item: f }) => (
-                <TouchableOpacity
-                  testID={`pick-folder-${f.id}`}
-                  style={styles.pickerRow}
-                  onPress={() => handlePickFolder(f.id)}
-                >
+                <TouchableOpacity testID={`pick-folder-${f.id}`} style={styles.pickerRow} onPress={() => handlePickFolder(f.id)}>
+                  <Feather name="folder" size={20} color={colors.primary} />
+                  <Text style={styles.pickerRowText}>{f.name}</Text>
+                  <Text style={styles.pickerRowMeta}>{f.panel_count}</Text>
+                </TouchableOpacity>
+              )}
+              ListEmptyComponent={<Text style={styles.pickerEmpty}>No folders available</Text>}
+            />
+          </View>
+        </View>
+      </Modal>
+
+      {/* Panel Preview */}
+      <Modal visible={previewPanel !== null} transparent animationType="fade" onRequestClose={() => setPreviewPanel(null)}>
+        <TouchableOpacity style={styles.previewOverlay} activeOpacity={1} onPress={() => setPreviewPanel(null)}>
+          {previewPanel && (
+            <Image
+              source={{ uri: getImageUri(previewPanel.id, previewPanel.stored_filename, previewPanel.image_type, previewPanel.folder_id) }}
+              style={styles.previewImage}
+              contentFit="contain"
+            />
+          )}
+        </TouchableOpacity>
+      </Modal>
+
+      {/* Panel Context Menu */}
+      <Modal visible={contextPanel !== null && !ctxConfirmDelete && !ctxFolderPicker} transparent animationType="fade" onRequestClose={closePanelContextMenu}>
+        <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={closePanelContextMenu}>
+          <View style={styles.contextCard}>
+            <Text style={styles.contextTitle} numberOfLines={1}>{contextPanel?.filename}</Text>
+            <TouchableOpacity testID="ctx-rename-btn" style={styles.contextRow} onPress={ctxRename}>
+              <Feather name="edit-3" size={18} color={colors.textMain} />
+              <Text style={styles.contextRowText}>Rename</Text>
+            </TouchableOpacity>
+            <TouchableOpacity testID="ctx-copy-btn" style={styles.contextRow} onPress={ctxCopyTo}>
+              <Feather name="copy" size={18} color={colors.textMain} />
+              <Text style={styles.contextRowText}>Copy To</Text>
+            </TouchableOpacity>
+            <TouchableOpacity testID="ctx-move-btn" style={styles.contextRow} onPress={ctxMoveTo}>
+              <Feather name="corner-right-down" size={18} color={colors.textMain} />
+              <Text style={styles.contextRowText}>Move To</Text>
+            </TouchableOpacity>
+            <TouchableOpacity testID="ctx-select-btn" style={styles.contextRow} onPress={ctxSelect}>
+              <Feather name="check-square" size={18} color={colors.textMain} />
+              <Text style={styles.contextRowText}>Select</Text>
+            </TouchableOpacity>
+            <TouchableOpacity testID="ctx-delete-btn" style={[styles.contextRow, styles.contextRowLast]} onPress={ctxDelete}>
+              <Feather name="trash-2" size={18} color={colors.primary} />
+              <Text style={[styles.contextRowText, { color: colors.primary }]}>Delete</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* Context Delete Confirmation */}
+      <Modal visible={ctxConfirmDelete} transparent animationType="fade" onRequestClose={() => setCtxConfirmDelete(false)}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Delete Panel</Text>
+            <Text style={styles.modalMessage}>
+              Delete "{contextPanel?.filename}"? This cannot be undone.
+            </Text>
+            <View style={styles.modalActions}>
+              <TouchableOpacity testID="ctx-cancel-delete-btn" style={styles.modalBtnSecondary} onPress={() => { setCtxConfirmDelete(false); setContextPanel(null); }}>
+                <Text style={styles.modalBtnSecText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity testID="ctx-confirm-delete-btn" style={styles.modalBtnDestructive} onPress={executeCtxDelete}>
+                <Text style={styles.modalBtnPrimText}>Delete</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Context Rename */}
+      <Modal visible={ctxRenameTarget !== null} transparent animationType="fade" onRequestClose={() => { setCtxRenameTarget(null); setCtxRenameName(''); }}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Rename Panel</Text>
+            <TextInput
+              testID="ctx-rename-input"
+              style={styles.modalInput}
+              placeholder="New name"
+              placeholderTextColor={colors.muted}
+              value={ctxRenameName}
+              onChangeText={setCtxRenameName}
+              autoFocus
+            />
+            <View style={styles.modalActions}>
+              <TouchableOpacity testID="ctx-cancel-rename-btn" style={styles.modalBtnSecondary} onPress={() => { setCtxRenameTarget(null); setCtxRenameName(''); }}>
+                <Text style={styles.modalBtnSecText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity testID="ctx-confirm-rename-btn" style={styles.modalBtnPrimary} onPress={handleCtxRename}>
+                <Text style={styles.modalBtnPrimText}>Rename</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Context Folder Picker */}
+      <Modal visible={ctxFolderPicker} transparent animationType="slide" onRequestClose={() => setCtxFolderPicker(false)}>
+        <View style={styles.pickerOverlay}>
+          <View style={styles.pickerCard}>
+            <View style={styles.pickerHeader}>
+              <Text style={styles.pickerTitle}>{ctxFolderAction === 'move' ? 'Move to' : 'Copy to'}</Text>
+              <TouchableOpacity testID="ctx-close-picker-btn" onPress={() => { setCtxFolderPicker(false); setContextPanel(null); }}>
+                <Feather name="x" size={22} color={colors.textMain} />
+              </TouchableOpacity>
+            </View>
+            <FlatList
+              data={ctxAvailableFolders}
+              keyExtractor={(f) => f.id}
+              renderItem={({ item: f }) => (
+                <TouchableOpacity testID={`ctx-pick-folder-${f.id}`} style={styles.pickerRow} onPress={() => handleCtxPickFolder(f.id)}>
                   <Feather name="folder" size={20} color={colors.primary} />
                   <Text style={styles.pickerRowText}>{f.name}</Text>
                   <Text style={styles.pickerRowMeta}>{f.panel_count}</Text>
@@ -482,179 +579,120 @@ export default function FolderViewScreen() {
   );
 }
 
+/* ══════════════════════════════ styles ══════════════════════════════ */
 const styles = StyleSheet.create({
-  rootWrap: { flex: 1, backgroundColor: colors.background },
   container: { flex: 1, backgroundColor: colors.background },
+  rootWrap: { flex: 1, backgroundColor: colors.background },
 
-  /* ── Headers ── */
+  /* ── headers ── */
   header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
+    flexDirection: 'row', alignItems: 'center',
+    paddingHorizontal: 12, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: colors.border,
   },
   headerBtn: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
-  headerCenter: { flex: 1, paddingLeft: 4 },
+  headerCenter: { flex: 1, paddingHorizontal: 4 },
   headerTitle: { fontSize: 18, fontWeight: '700', color: colors.textMain },
-  headerSub: { fontSize: 12, color: colors.mutedForeground, marginTop: 2 },
-  headerActions: { flexDirection: 'row', gap: 2 },
+  headerSub: { fontSize: 13, color: colors.mutedForeground, marginTop: 2 },
 
   selectHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.primary,
+    flexDirection: 'row', alignItems: 'center',
+    paddingHorizontal: 12, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: colors.primary,
     backgroundColor: 'rgba(239,68,68,0.08)',
   },
   selectCount: { fontSize: 17, fontWeight: '700', color: colors.textMain, marginLeft: 8 },
 
-  /* ── Grid ── */
-  gridContent: { padding: 16, paddingBottom: 100 },
-  gridRow: { gap: GRID_GAP, marginBottom: GRID_GAP },
-
-  /* ── Panel card ── */
-  panelCard: {
-    backgroundColor: colors.surface,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: colors.border,
+  /* ── grid ── */
+  gridContent: { padding: 12, paddingBottom: 100 },
+  panelCell: {
+    width: THUMB_SIZE, height: THUMB_SIZE + 32, margin: 4,
+    backgroundColor: colors.surface, borderRadius: 8, borderWidth: 1, borderColor: colors.border,
     overflow: 'hidden',
-    alignItems: 'center',
   },
-  panelCardSelected: { borderColor: colors.primary, backgroundColor: 'rgba(239,68,68,0.06)' },
-  panelLabel: { fontSize: 11, color: colors.mutedForeground, paddingVertical: 8, fontWeight: '500' },
+  panelCellSelected: { borderColor: colors.primary, borderWidth: 2 },
+  panelThumb: { width: '100%', height: THUMB_SIZE },
+  panelLabel: { paddingHorizontal: 6, paddingVertical: 6 },
+  panelLabelText: { fontSize: 11, color: colors.mutedForeground },
 
   checkbox: {
-    position: 'absolute',
-    top: 8,
-    left: 8,
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    borderWidth: 2,
-    borderColor: colors.muted,
-    backgroundColor: 'rgba(0,0,0,0.4)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    zIndex: 5,
+    position: 'absolute', top: 6, left: 6, zIndex: 5,
+    width: 22, height: 22, borderRadius: 11, borderWidth: 2, borderColor: '#fff',
+    backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center',
   },
   checkboxChecked: { backgroundColor: colors.primary, borderColor: colors.primary },
 
-  /* ── Selection toolbar ── */
+  emptyWrap: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 80 },
+  emptyText: { color: colors.muted, fontSize: 16, marginTop: 12 },
+
+  /* ── selection toolbar ── */
   selToolbar: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    alignItems: 'center',
-    backgroundColor: colors.surface,
-    borderTopWidth: 1,
-    borderTopColor: colors.border,
-    paddingVertical: 10,
-    paddingBottom: 24,
+    flexDirection: 'row', justifyContent: 'space-around', alignItems: 'center',
+    backgroundColor: colors.surface, borderTopWidth: 1, borderTopColor: colors.border,
+    paddingVertical: 10, paddingBottom: 24,
   },
   selAction: { alignItems: 'center', gap: 4, minWidth: 56 },
   selActionText: { fontSize: 11, color: colors.textSecondary, fontWeight: '500' },
 
-  /* ── Empty / Error ── */
-  emptyState: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12 },
-  emptyText: { fontSize: 16, color: colors.muted },
-  errorText: { color: colors.muted, fontSize: 16, textAlign: 'center', marginTop: 80 },
-
-  /* ── Preview overlay ── */
-  previewOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0,0,0,0.95)',
-    zIndex: 100,
-  },
-  previewSafe: { flex: 1 },
-  previewHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-  },
-  previewTitle: { fontSize: 16, fontWeight: '600', color: '#fff', flex: 1, marginRight: 8 },
-  previewActions: { flexDirection: 'row', gap: 8 },
-  previewBtn: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
-  previewBody: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 16 },
-  previewImage: { width: '100%', height: '100%' },
-
-  /* ── Modals ── */
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.85)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
+  /* ── modals ── */
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.85)', justifyContent: 'center', alignItems: 'center' },
   modalCard: {
-    width: SCREEN_W - 48,
-    backgroundColor: '#27272a',
-    borderRadius: 16,
-    padding: 24,
-    borderWidth: 1,
-    borderColor: '#52525b',
-    elevation: 20,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.5,
-    shadowRadius: 20,
+    width: SCREEN_W - 48, backgroundColor: '#27272a', borderRadius: 16,
+    padding: 24, borderWidth: 1, borderColor: '#52525b', elevation: 20,
   },
-  modalTitle: { fontSize: 18, fontWeight: '700', color: colors.textMain, marginBottom: 16 },
+  modalTitle: { fontSize: 18, fontWeight: '700', color: colors.textMain, marginBottom: 12 },
   modalMessage: { fontSize: 14, color: colors.mutedForeground, marginBottom: 4, lineHeight: 20 },
   modalInput: {
-    height: 48,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 10,
-    paddingHorizontal: 14,
-    fontSize: 15,
-    color: colors.textMain,
-    backgroundColor: colors.background,
+    backgroundColor: '#3f3f46', borderRadius: 8, padding: 14,
+    fontSize: 15, color: colors.textMain, borderWidth: 1, borderColor: '#52525b', marginBottom: 16,
   },
-  modalActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 12, marginTop: 20 },
-  modalBtnSecondary: { paddingHorizontal: 20, paddingVertical: 12, borderRadius: 8, backgroundColor: colors.surfaceHighlight },
-  modalBtnSecText: { color: colors.textMain, fontWeight: '600', fontSize: 14 },
-  modalBtnPrimary: { paddingHorizontal: 20, paddingVertical: 12, borderRadius: 8, backgroundColor: colors.primary },
-  modalBtnDestructive: { paddingHorizontal: 20, paddingVertical: 12, borderRadius: 8, backgroundColor: '#7f1d1d' },
-  modalBtnPrimText: { color: colors.primaryForeground, fontWeight: '700', fontSize: 14 },
+  modalActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 12, marginTop: 16 },
+  modalBtnPrimary: {
+    paddingHorizontal: 20, paddingVertical: 12, borderRadius: 8, backgroundColor: colors.primary,
+  },
+  modalBtnSecondary: {
+    paddingHorizontal: 20, paddingVertical: 12, borderRadius: 8, backgroundColor: '#3f3f46',
+  },
+  modalBtnDestructive: {
+    paddingHorizontal: 20, paddingVertical: 12, borderRadius: 8, backgroundColor: '#dc2626',
+  },
+  modalBtnPrimText: { color: '#fff', fontWeight: '700', fontSize: 14 },
+  modalBtnSecText: { color: colors.mutedForeground, fontWeight: '600', fontSize: 14 },
 
-  /* ── Folder picker ── */
-  pickerOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.6)',
-    justifyContent: 'flex-end',
+  /* ── context menu ── */
+  contextCard: {
+    width: SCREEN_W - 64, backgroundColor: '#27272a', borderRadius: 14,
+    paddingVertical: 8, borderWidth: 1, borderColor: '#52525b', elevation: 20,
   },
+  contextTitle: {
+    fontSize: 15, fontWeight: '700', color: colors.textMain,
+    paddingHorizontal: 16, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#3f3f46',
+  },
+  contextRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 14,
+    paddingHorizontal: 16, paddingVertical: 13, borderBottomWidth: 1, borderBottomColor: '#3f3f46',
+  },
+  contextRowLast: { borderBottomWidth: 0 },
+  contextRowText: { fontSize: 15, color: colors.textMain, fontWeight: '500' },
+
+  /* ── folder picker ── */
+  pickerOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' },
   pickerCard: {
-    backgroundColor: colors.surface,
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    maxHeight: '60%',
-    paddingBottom: 32,
+    backgroundColor: '#27272a', borderTopLeftRadius: 20, borderTopRightRadius: 20,
+    maxHeight: '60%', borderWidth: 1, borderColor: '#52525b',
   },
   pickerHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    paddingHorizontal: 20, paddingVertical: 16, borderBottomWidth: 1, borderBottomColor: '#3f3f46',
   },
   pickerTitle: { fontSize: 17, fontWeight: '700', color: colors.textMain },
   pickerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 14,
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    paddingHorizontal: 20, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: '#3f3f46',
   },
   pickerRowText: { flex: 1, fontSize: 15, color: colors.textMain },
   pickerRowMeta: { fontSize: 13, color: colors.mutedForeground },
-  pickerEmpty: { padding: 24, textAlign: 'center', color: colors.muted, fontSize: 14 },
+  pickerEmpty: { padding: 20, textAlign: 'center', color: colors.muted, fontSize: 14 },
+
+  /* ── preview ── */
+  previewOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.95)', justifyContent: 'center', alignItems: 'center' },
+  previewImage: { width: SCREEN_W, height: '80%' },
 });

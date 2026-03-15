@@ -8,6 +8,7 @@ import {
   Alert,
   ActivityIndicator,
   Dimensions,
+  Modal,
   NativeSyntheticEvent,
   NativeScrollEvent,
 } from 'react-native';
@@ -16,10 +17,10 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import { colors } from '@/utils/theme';
-import { api, ImageData } from '@/utils/api';
+import { db, ImageData } from '@/utils/db';
 
 const SCREEN_W = Dimensions.get('window').width;
-const MARKER_OFFSET = 0.35; // 35% from top — slightly above center
+const MARKER_OFFSET = 0.25; // 25% from top
 
 export default function EditorScreen() {
   const router = useRouter();
@@ -27,11 +28,14 @@ export default function EditorScreen() {
   const scrollRef = useRef<ScrollView>(null);
 
   const [imageData, setImageData] = useState<ImageData | null>(null);
+  const [imageUri, setImageUri] = useState<string>('');
   const [loading, setLoading] = useState(true);
   const [processing, setProcessing] = useState(false);
   const [scrollY, setScrollY] = useState(0);
   const [viewportH, setViewportH] = useState(0);
   const [markers, setMarkers] = useState<number[]>([]);
+  const [showExtractionSuccess, setShowExtractionSuccess] = useState(false);
+  const [extractionResult, setExtractionResult] = useState<{ panel_count: number; folder_name: string } | null>(null);
 
   const displayWidth = SCREEN_W;
   const displayHeight = imageData
@@ -40,11 +44,18 @@ export default function EditorScreen() {
 
   useEffect(() => {
     if (!imageId) return;
-    api
-      .getImage(imageId)
-      .then(setImageData)
-      .catch((e) => Alert.alert('Error', e.message))
-      .finally(() => setLoading(false));
+    (async () => {
+      try {
+        const img = await db.getImage(imageId);
+        setImageData(img);
+        const uri = await db.getImageUriById(imageId);
+        setImageUri(uri);
+      } catch (e: any) {
+        Alert.alert('Error', e.message);
+      } finally {
+        setLoading(false);
+      }
+    })();
   }, [imageId]);
 
   const handleScroll = useCallback(
@@ -92,22 +103,14 @@ export default function EditorScreen() {
 
     setProcessing(true);
     try {
-      const result = await api.processMarkers({
+      const result = await db.processMarkers({
         image_id: imageData.id,
         markers,
         display_width: displayWidth,
         display_height: displayHeight,
       });
-      Alert.alert(
-        'Panels extracted successfully',
-        `${result.panel_count} panels saved to "${result.folder_name}"`,
-        [
-          {
-            text: 'Return to Main Page',
-            onPress: () => router.replace('/'),
-          },
-        ]
-      );
+      setExtractionResult({ panel_count: result.panel_count, folder_name: result.folder_name });
+      setShowExtractionSuccess(true);
     } catch (e: any) {
       Alert.alert('Error', e.message);
     } finally {
@@ -133,8 +136,6 @@ export default function EditorScreen() {
       </SafeAreaView>
     );
   }
-
-  const imageUrl = api.getImageUrl(imageData.id);
 
   return (
     <View style={styles.container}>
@@ -196,7 +197,7 @@ export default function EditorScreen() {
         >
           <View style={{ width: displayWidth, height: displayHeight, position: 'relative' }}>
             <Image
-              source={{ uri: imageUrl }}
+              source={{ uri: imageUri }}
               style={{ width: displayWidth, height: displayHeight }}
               contentFit="fill"
               cachePolicy="memory-disk"
@@ -258,6 +259,35 @@ export default function EditorScreen() {
           )}
         </TouchableOpacity>
       </SafeAreaView>
+
+      {/* Extraction Success Modal */}
+      <Modal visible={showExtractionSuccess} transparent animationType="fade" onRequestClose={() => {}}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <View style={styles.successIconWrap}>
+              <Feather name="check-circle" size={48} color={colors.success} />
+            </View>
+            <Text style={styles.modalTitle}>Panels extracted successfully</Text>
+            {extractionResult && (
+              <Text style={styles.modalMessage}>
+                {extractionResult.panel_count} panel{extractionResult.panel_count > 1 ? 's' : ''} saved to "{extractionResult.folder_name}"
+              </Text>
+            )}
+            <View style={styles.modalActions}>
+              <TouchableOpacity
+                testID="extraction-success-btn"
+                style={styles.modalBtnPrimary}
+                onPress={() => {
+                  setShowExtractionSuccess(false);
+                  router.replace('/');
+                }}
+              >
+                <Text style={styles.modalBtnPrimText}>Return to Main Page</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -374,4 +404,23 @@ const styles = StyleSheet.create({
     letterSpacing: 0.8,
   },
   errorText: { color: colors.muted, fontSize: 16, textAlign: 'center', marginTop: 80 },
+
+  /* ── Extraction success modal ── */
+  modalOverlay: {
+    flex: 1, backgroundColor: 'rgba(0,0,0,0.85)', justifyContent: 'center', alignItems: 'center',
+  },
+  modalCard: {
+    width: SCREEN_W - 48, backgroundColor: '#27272a', borderRadius: 16,
+    padding: 24, borderWidth: 1, borderColor: '#52525b',
+    elevation: 20, shadowColor: '#000', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.5, shadowRadius: 20,
+    alignItems: 'center',
+  },
+  successIconWrap: { marginBottom: 16 },
+  modalTitle: { fontSize: 18, fontWeight: '700', color: colors.textMain, marginBottom: 12, textAlign: 'center' },
+  modalMessage: { fontSize: 14, color: colors.mutedForeground, marginBottom: 4, lineHeight: 20, textAlign: 'center' },
+  modalActions: { flexDirection: 'row', justifyContent: 'center', gap: 12, marginTop: 20, width: '100%' },
+  modalBtnPrimary: {
+    flex: 1, paddingHorizontal: 20, paddingVertical: 14, borderRadius: 8, backgroundColor: colors.primary, alignItems: 'center',
+  },
+  modalBtnPrimText: { color: colors.primaryForeground, fontWeight: '700', fontSize: 14 },
 });

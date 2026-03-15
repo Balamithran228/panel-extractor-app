@@ -77,7 +77,38 @@ agenthub/agents/youtube/db
 .cache/
 
 # Mobile development
-android-sdk/ -e 
+android-sdk/
+frontend/android/app/build/
+frontend/android/build/
+frontend/android/.gradle/
+frontend/android/.kotlin/
+frontend/android/local.properties
+frontend/.metro-cache/
+frontend/dist/
+frontend/node_modules/
+**/build/
+**/intermediates/
+**/out/
+**/bin/
+**/obj/
+
+# Binary files
+*.so
+*.a
+*.lib
+*.dll
+*.exe
+*.pyc
+*.pyo
+*.db
+*.sqlite
+*.sqlite3
+
 # Environment files
+.env
+.env.*
 *.env
 *.env.*
+local.properties
+
+

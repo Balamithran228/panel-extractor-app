@@ -19,7 +19,7 @@ import { Feather } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import { colors } from '@/utils/theme';
-import { api, FolderData, ImageData } from '@/utils/api';
+import { db, FolderData, ImageData, getImageUri } from '@/utils/db';
 
 const { width: SCREEN_W } = Dimensions.get('window');
 
@@ -54,12 +54,20 @@ export default function FileManagerScreen() {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [showDeleteSuccess, setShowDeleteSuccess] = useState(false);
 
+  /* context menu */
+  const [contextItem, setContextItem] = useState<SelectableItem | null>(null);
+  const [contextFolderPicker, setContextFolderPicker] = useState(false);
+  const [contextFolderAction, setContextFolderAction] = useState<'move' | 'copy'>('copy');
+  const [contextConfirmDelete, setContextConfirmDelete] = useState(false);
+  const [contextRenameTarget, setContextRenameTarget] = useState<{type: 'folder' | 'image'; id: string; name: string} | null>(null);
+  const [contextRenameName, setContextRenameName] = useState('');
+
   const totalSelected = selectedFolders.size + selectedImages.size;
 
   /* ── data loading ── */
   const loadData = useCallback(async () => {
     try {
-      const [f, s] = await Promise.all([api.listFolders(), api.listImages('source')]);
+      const [f, s] = await Promise.all([db.listFolders(), db.listImages('source')]);
       setFolders(f);
       setSources(s);
     } catch (e: any) {
@@ -90,15 +98,18 @@ export default function FileManagerScreen() {
       }
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ['images'],
-        base64: true,
         quality: 1,
       });
       if (result.canceled || !result.assets?.[0]) return;
       const asset = result.assets[0];
-      if (!asset.base64) { Alert.alert('Error', 'Failed to read image data.'); return; }
 
       setUploading(true);
-      const uploaded = await api.uploadImage(asset.base64, asset.fileName || 'screenshot.png');
+      const uploaded = await db.uploadImage(
+        asset.uri,
+        asset.fileName || 'screenshot.png',
+        asset.width || 1080,
+        asset.height || 1920,
+      );
       setUploading(false);
       router.push({ pathname: '/editor', params: { imageId: uploaded.id } });
     } catch (e: any) {
@@ -129,11 +140,130 @@ export default function FileManagerScreen() {
     else setSelectedImages(new Set([item.data.id]));
   };
 
+  /* ── context menu actions ── */
+  const openContextMenu = (item: SelectableItem) => {
+    setContextItem(item);
+  };
+
+  const closeContextMenu = () => setContextItem(null);
+
+  const contextMenuRename = () => {
+    if (!contextItem) return;
+    if (contextItem.kind === 'folder') {
+      setContextRenameName(contextItem.data.name);
+      setContextRenameTarget({ type: 'folder', id: contextItem.data.id, name: contextItem.data.name });
+    } else {
+      setContextRenameName(contextItem.data.filename);
+      setContextRenameTarget({ type: 'image', id: contextItem.data.id, name: contextItem.data.filename });
+    }
+    closeContextMenu();
+  };
+
+  const handleContextRename = async () => {
+    if (!contextRenameTarget) return;
+    const name = contextRenameName.trim();
+    if (!name) return;
+    try {
+      if (contextRenameTarget.type === 'folder') {
+        await db.renameFolder(contextRenameTarget.id, name);
+      } else {
+        await db.renameImage(contextRenameTarget.id, name);
+      }
+      setContextRenameTarget(null);
+      setContextRenameName('');
+      loadData();
+    } catch (e: any) {
+      Alert.alert('Error', e.message);
+    }
+  };
+
+  const contextMenuDelete = () => {
+    setContextConfirmDelete(true);
+  };
+
+  const executeContextDelete = async () => {
+    setContextConfirmDelete(false);
+    if (!contextItem) return;
+    try {
+      if (contextItem.kind === 'folder') {
+        await db.deleteFolder(contextItem.data.id);
+      } else {
+        await db.deleteImage(contextItem.data.id);
+      }
+      setContextItem(null);
+      loadData();
+      setShowDeleteSuccess(true);
+    } catch (e: any) {
+      Alert.alert('Error', e.message);
+    }
+  };
+
+  const contextMenuCopyTo = () => {
+    setContextFolderAction('copy');
+    setContextFolderPicker(true);
+  };
+
+  const contextMenuMoveTo = () => {
+    if (!contextItem || contextItem.kind === 'folder') {
+      Alert.alert('Info', 'Only images can be moved.');
+      return;
+    }
+    setContextFolderAction('move');
+    setContextFolderPicker(true);
+  };
+
+  const handleContextPickFolder = async (targetFolderId: string | null) => {
+    setContextFolderPicker(false);
+    if (!contextItem) return;
+    const itemId = contextItem.data.id;
+    try {
+      if (contextFolderAction === 'move') {
+        await db.moveItems([itemId], targetFolderId);
+      } else {
+        await db.copyItems([itemId], targetFolderId);
+      }
+      setContextItem(null);
+      loadData();
+    } catch (e: any) {
+      Alert.alert('Error', e.message);
+    }
+  };
+
+  const contextMenuSelect = () => {
+    if (!contextItem) return;
+    enterSelectWithItem(contextItem);
+    closeContextMenu();
+  };
+
+  const contextMenuShare = async () => {
+    if (!contextItem) return;
+    try {
+      const urls: string[] = [];
+      if (contextItem.kind === 'folder') {
+        const detail = await db.getFolder(contextItem.data.id);
+        for (const p of detail.panels) {
+          urls.push(getImageUri(p.id, p.stored_filename, p.image_type, p.folder_id));
+        }
+      } else {
+        const img = contextItem.data;
+        urls.push(getImageUri(img.id, img.stored_filename, img.image_type, img.folder_id));
+      }
+      if (urls.length === 0) {
+        Alert.alert('Info', 'Nothing to share.');
+      } else {
+        await Share.share({ message: urls.join('\n'), title: 'Panel Extractor' });
+      }
+    } catch (e: any) {
+      Alert.alert('Error', e.message);
+    }
+    closeContextMenu();
+  };
+
   /* ── actions ── */
   const handleCreateFolder = async () => {
     const name = newFolderName.trim();
     if (!name) return;
-    await api.createFolder(name);
+    await db.createFolder(name);
     setShowCreateFolder(false);
     setNewFolderName('');
     loadData();
@@ -145,9 +275,9 @@ export default function FileManagerScreen() {
     if (!name) return;
     try {
       if (renameTarget.type === 'folder') {
-        await api.renameFolder(renameTarget.id, name);
+        await db.renameFolder(renameTarget.id, name);
       } else {
-        await api.renameImage(renameTarget.id, name);
+        await db.renameImage(renameTarget.id, name);
       }
       setRenameTarget(null);
       setRenameName('');
@@ -165,7 +295,7 @@ export default function FileManagerScreen() {
   const executeDelete = async () => {
     setConfirmDelete(false);
     try {
-      await api.bulkDelete(
+      await db.bulkDelete(
         Array.from(selectedImages),
         Array.from(selectedFolders),
       );
@@ -191,9 +321,9 @@ export default function FileManagerScreen() {
     const ids = Array.from(selectedImages);
     try {
       if (folderPickerAction === 'move') {
-        await api.moveItems(ids, targetFolderId);
+        await db.moveItems(ids, targetFolderId);
       } else {
-        await api.copyItems(ids, targetFolderId);
+        await db.copyItems(ids, targetFolderId);
       }
     } catch (e: any) {
       Alert.alert('Error', e.message);
@@ -204,11 +334,10 @@ export default function FileManagerScreen() {
 
   const handleShare = async () => {
     const urls: string[] = [];
-    selectedImages.forEach((id) => urls.push(api.getImageUrl(id)));
-    selectedFolders.forEach((fid) => {
-      const f = folders.find((x) => x.id === fid);
-      if (f) urls.push(`Folder: ${f.name}`);
-    });
+    for (const id of selectedImages) {
+      const img = sources.find((s) => s.id === id);
+      if (img) urls.push(getImageUri(id, img.stored_filename, img.image_type, img.folder_id));
+    }
     try {
       await Share.share({ message: urls.join('\n'), title: 'Panel Extractor' });
     } catch (_e) { /* user cancelled */ }
@@ -276,7 +405,7 @@ export default function FileManagerScreen() {
             if (selectMode) toggleFolderSelect(f.id);
             else router.push({ pathname: '/folder/[id]', params: { id: f.id } });
           }}
-          onLongPress={() => enterSelectWithItem({ kind: 'folder', data: f })}
+          onLongPress={() => openContextMenu({ kind: 'folder', data: f })}
           activeOpacity={0.7}
         >
           {selectMode && (
@@ -286,7 +415,7 @@ export default function FileManagerScreen() {
           )}
           <View style={styles.cardThumb}>
             {f.thumbnail_id ? (
-              <Image source={{ uri: api.getImageUrl(f.thumbnail_id) }} style={styles.thumbImage} contentFit="cover" />
+              <ThumbnailImage imageId={f.thumbnail_id} />
             ) : (
               <Feather name="folder" size={28} color={colors.muted} />
             )}
@@ -303,6 +432,7 @@ export default function FileManagerScreen() {
     if (item.kind === 'image') {
       const img = item.data;
       const selected = selectedImages.has(img.id);
+      const imgUri = getImageUri(img.id, img.stored_filename, img.image_type, img.folder_id);
       return (
         <TouchableOpacity
           testID={`source-card-${img.id}`}
@@ -311,7 +441,7 @@ export default function FileManagerScreen() {
             if (selectMode) toggleImageSelect(img.id);
             else router.push({ pathname: '/editor', params: { imageId: img.id } });
           }}
-          onLongPress={() => enterSelectWithItem({ kind: 'image', data: img })}
+          onLongPress={() => openContextMenu({ kind: 'image', data: img })}
           activeOpacity={0.7}
         >
           {selectMode && (
@@ -320,7 +450,7 @@ export default function FileManagerScreen() {
             </View>
           )}
           <View style={styles.cardThumb}>
-            <Image source={{ uri: api.getImageUrl(img.id) }} style={styles.thumbImage} contentFit="cover" />
+            <Image source={{ uri: imgUri }} style={styles.thumbImage} contentFit="cover" />
           </View>
           <View style={styles.cardInfo}>
             <Text style={styles.cardName} numberOfLines={1}>{img.filename}</Text>
@@ -541,8 +671,140 @@ export default function FileManagerScreen() {
           </View>
         </View>
       </Modal>
+      {/* Context Menu Modal */}
+      <Modal visible={contextItem !== null && !contextConfirmDelete && !contextFolderPicker} transparent animationType="fade" onRequestClose={closeContextMenu}>
+        <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={closeContextMenu}>
+          <View style={styles.contextCard}>
+            <Text style={styles.contextTitle} numberOfLines={1}>
+              {contextItem?.kind === 'folder' ? contextItem.data.name : (contextItem as any)?.data?.filename}
+            </Text>
+            <TouchableOpacity testID="ctx-rename-btn" style={styles.contextRow} onPress={contextMenuRename}>
+              <Feather name="edit-3" size={18} color={colors.textMain} />
+              <Text style={styles.contextRowText}>Rename</Text>
+            </TouchableOpacity>
+            {contextItem?.kind === 'image' && (
+              <TouchableOpacity testID="ctx-copy-btn" style={styles.contextRow} onPress={contextMenuCopyTo}>
+                <Feather name="copy" size={18} color={colors.textMain} />
+                <Text style={styles.contextRowText}>Copy To</Text>
+              </TouchableOpacity>
+            )}
+            {contextItem?.kind === 'image' && (
+              <TouchableOpacity testID="ctx-move-btn" style={styles.contextRow} onPress={contextMenuMoveTo}>
+                <Feather name="corner-right-down" size={18} color={colors.textMain} />
+                <Text style={styles.contextRowText}>Move To</Text>
+              </TouchableOpacity>
+            )}
+            <TouchableOpacity testID="ctx-select-btn" style={styles.contextRow} onPress={contextMenuSelect}>
+              <Feather name="check-square" size={18} color={colors.textMain} />
+              <Text style={styles.contextRowText}>Select</Text>
+            </TouchableOpacity>
+            <TouchableOpacity testID="ctx-share-btn" style={styles.contextRow} onPress={contextMenuShare}>
+              <Feather name="share-2" size={18} color={colors.textMain} />
+              <Text style={styles.contextRowText}>Share</Text>
+            </TouchableOpacity>
+            <TouchableOpacity testID="ctx-delete-btn" style={[styles.contextRow, styles.contextRowLast]} onPress={contextMenuDelete}>
+              <Feather name="trash-2" size={18} color={colors.primary} />
+              <Text style={[styles.contextRowText, { color: colors.primary }]}>Delete</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* Context Delete Confirmation Modal */}
+      <Modal visible={contextConfirmDelete} transparent animationType="fade" onRequestClose={() => setContextConfirmDelete(false)}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Delete {contextItem?.kind === 'folder' ? 'Folder' : 'Image'}</Text>
+            <Text style={styles.modalMessage}>
+              Delete "{contextItem?.kind === 'folder' ? contextItem.data.name : (contextItem as any)?.data?.filename}"? This cannot be undone.
+            </Text>
+            <View style={styles.modalActions}>
+              <TouchableOpacity testID="ctx-cancel-delete-btn" style={styles.modalBtnSecondary} onPress={() => { setContextConfirmDelete(false); setContextItem(null); }}>
+                <Text style={styles.modalBtnSecText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity testID="ctx-confirm-delete-btn" style={styles.modalBtnDestructive} onPress={executeContextDelete}>
+                <Text style={styles.modalBtnPrimText}>Delete</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Context Rename Modal */}
+      <Modal visible={contextRenameTarget !== null} transparent animationType="fade" onRequestClose={() => { setContextRenameTarget(null); setContextRenameName(''); }}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Rename {contextRenameTarget?.type === 'image' ? 'File' : 'Folder'}</Text>
+            <TextInput
+              testID="ctx-rename-input"
+              style={styles.modalInput}
+              placeholder="New name"
+              placeholderTextColor={colors.muted}
+              value={contextRenameName}
+              onChangeText={setContextRenameName}
+              autoFocus
+            />
+            <View style={styles.modalActions}>
+              <TouchableOpacity testID="ctx-cancel-rename-btn" style={styles.modalBtnSecondary} onPress={() => { setContextRenameTarget(null); setContextRenameName(''); }}>
+                <Text style={styles.modalBtnSecText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity testID="ctx-confirm-rename-btn" style={styles.modalBtnPrimary} onPress={handleContextRename}>
+                <Text style={styles.modalBtnPrimText}>Rename</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Context Folder Picker Modal */}
+      <Modal visible={contextFolderPicker} transparent animationType="slide" onRequestClose={() => setContextFolderPicker(false)}>
+        <View style={styles.pickerOverlay}>
+          <View style={styles.pickerCard}>
+            <View style={styles.pickerHeader}>
+              <Text style={styles.pickerTitle}>
+                {contextFolderAction === 'move' ? 'Move to' : 'Copy to'}
+              </Text>
+              <TouchableOpacity testID="ctx-close-picker-btn" onPress={() => { setContextFolderPicker(false); setContextItem(null); }}>
+                <Feather name="x" size={22} color={colors.textMain} />
+              </TouchableOpacity>
+            </View>
+            <TouchableOpacity testID="ctx-pick-root-btn" style={styles.pickerRow} onPress={() => handleContextPickFolder(null)}>
+              <Feather name="home" size={20} color={colors.textMain} />
+              <Text style={styles.pickerRowText}>Root (no folder)</Text>
+            </TouchableOpacity>
+            <FlatList
+              data={folders}
+              keyExtractor={(f) => f.id}
+              renderItem={({ item: f }) => (
+                <TouchableOpacity testID={`ctx-pick-folder-${f.id}`} style={styles.pickerRow} onPress={() => handleContextPickFolder(f.id)}>
+                  <Feather name="folder" size={20} color={colors.primary} />
+                  <Text style={styles.pickerRowText}>{f.name}</Text>
+                  <Text style={styles.pickerRowMeta}>{f.panel_count}</Text>
+                </TouchableOpacity>
+              )}
+              ListEmptyComponent={<Text style={styles.pickerEmpty}>No folders available</Text>}
+            />
+          </View>
+        </View>
+      </Modal>
     </View>
   );
+}
+
+/* ── Thumbnail component that resolves local URI ── */
+function ThumbnailImage({ imageId }: { imageId: string }) {
+  const [uri, setUri] = useState<string>('');
+  useCallback(() => {
+    db.getImageUriById(imageId).then(setUri).catch(() => {});
+  }, [imageId]);
+
+  // Load on mount
+  React.useEffect(() => {
+    db.getImageUriById(imageId).then(setUri).catch(() => {});
+  }, [imageId]);
+
+  if (!uri) return <Feather name="image" size={28} color={colors.muted} />;
+  return <Image source={{ uri }} style={styles.thumbImage} contentFit="cover" />;
 }
 
 /* ══════════════════════════════ styles ══════════════════════════════ */
@@ -580,20 +842,22 @@ const styles = StyleSheet.create({
   /* ── cards ── */
   card: {
     backgroundColor: colors.surface, borderRadius: 10, borderWidth: 1, borderColor: colors.border,
-    marginBottom: 10, flexDirection: 'row', alignItems: 'center', overflow: 'hidden',
+    flexDirection: 'row', alignItems: 'center', marginBottom: 10, overflow: 'hidden',
   },
   cardSelected: { borderColor: colors.primary, backgroundColor: 'rgba(239,68,68,0.06)' },
   cardThumb: {
-    width: 72, height: 72, backgroundColor: colors.surfaceHighlight, alignItems: 'center', justifyContent: 'center',
+    width: 56, height: 56, alignItems: 'center', justifyContent: 'center',
+    backgroundColor: colors.surfaceHighlight, marginLeft: 12, borderRadius: 8, overflow: 'hidden',
   },
-  thumbImage: { width: 72, height: 72 },
-  cardInfo: { flex: 1, paddingHorizontal: 14, justifyContent: 'center' },
-  cardName: { fontSize: 14, fontWeight: '600', color: colors.textMain, marginBottom: 3 },
-  cardMeta: { fontSize: 12, color: colors.mutedForeground },
+  thumbImage: { width: 56, height: 56 },
+  cardInfo: { flex: 1, paddingHorizontal: 12, paddingVertical: 14 },
+  cardName: { fontSize: 15, fontWeight: '600', color: colors.textMain },
+  cardMeta: { fontSize: 12, color: colors.mutedForeground, marginTop: 2 },
 
   checkbox: {
-    width: 24, height: 24, borderRadius: 12, borderWidth: 2, borderColor: colors.muted,
-    marginLeft: 12, alignItems: 'center', justifyContent: 'center',
+    position: 'absolute', left: 8, top: '50%', marginTop: -11,
+    width: 22, height: 22, borderRadius: 11, borderWidth: 2, borderColor: colors.muted,
+    backgroundColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center', zIndex: 5,
   },
   checkboxChecked: { backgroundColor: colors.primary, borderColor: colors.primary },
 
@@ -608,52 +872,73 @@ const styles = StyleSheet.create({
 
   /* ── FAB ── */
   fab: {
-    position: 'absolute', bottom: 28, right: 20, flexDirection: 'row', alignItems: 'center', gap: 8,
-    backgroundColor: colors.primary, paddingHorizontal: 22, paddingVertical: 14, borderRadius: 28,
-    elevation: 8, shadowColor: colors.primary, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.4, shadowRadius: 12,
+    position: 'absolute', bottom: 24, alignSelf: 'center',
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    backgroundColor: colors.primary, paddingHorizontal: 24, paddingVertical: 14, borderRadius: 28,
+    elevation: 6, shadowColor: colors.primary, shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.4, shadowRadius: 8,
   },
   fabText: { color: colors.primaryForeground, fontWeight: '700', fontSize: 15 },
 
-  /* ── modals (absolute overlay) ── */
+  /* ── modals ── */
   modalOverlay: {
     flex: 1, backgroundColor: 'rgba(0,0,0,0.85)', justifyContent: 'center', alignItems: 'center',
   },
   modalCard: {
     width: SCREEN_W - 48, backgroundColor: '#27272a', borderRadius: 16,
-    padding: 24, borderWidth: 1, borderColor: '#52525b',
-    elevation: 20, shadowColor: '#000', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.5, shadowRadius: 20,
+    padding: 24, borderWidth: 1, borderColor: '#52525b', elevation: 20,
   },
-  modalTitle: { fontSize: 18, fontWeight: '700', color: colors.textMain, marginBottom: 16 },
+  modalTitle: { fontSize: 18, fontWeight: '700', color: colors.textMain, marginBottom: 12 },
   modalMessage: { fontSize: 14, color: colors.mutedForeground, marginBottom: 4, lineHeight: 20 },
   modalInput: {
-    height: 48, borderWidth: 1, borderColor: colors.border, borderRadius: 10,
-    paddingHorizontal: 14, fontSize: 15, color: colors.textMain, backgroundColor: colors.background,
+    backgroundColor: '#3f3f46', borderRadius: 8, padding: 14,
+    fontSize: 15, color: colors.textMain, borderWidth: 1, borderColor: '#52525b', marginBottom: 16,
   },
-  modalActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 12, marginTop: 20 },
-  modalBtnSecondary: { paddingHorizontal: 20, paddingVertical: 12, borderRadius: 8, backgroundColor: colors.surfaceHighlight },
-  modalBtnSecText: { color: colors.textMain, fontWeight: '600', fontSize: 14 },
-  modalBtnPrimary: { paddingHorizontal: 20, paddingVertical: 12, borderRadius: 8, backgroundColor: colors.primary },
-  modalBtnDestructive: { paddingHorizontal: 20, paddingVertical: 12, borderRadius: 8, backgroundColor: '#7f1d1d' },
-  modalBtnPrimText: { color: colors.primaryForeground, fontWeight: '700', fontSize: 14 },
+  modalActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 12, marginTop: 16 },
+  modalBtnPrimary: {
+    paddingHorizontal: 20, paddingVertical: 12, borderRadius: 8, backgroundColor: colors.primary,
+  },
+  modalBtnSecondary: {
+    paddingHorizontal: 20, paddingVertical: 12, borderRadius: 8, backgroundColor: '#3f3f46',
+  },
+  modalBtnDestructive: {
+    paddingHorizontal: 20, paddingVertical: 12, borderRadius: 8, backgroundColor: '#dc2626',
+  },
+  modalBtnPrimText: { color: '#fff', fontWeight: '700', fontSize: 14 },
+  modalBtnSecText: { color: colors.mutedForeground, fontWeight: '600', fontSize: 14 },
+
+  /* ── context menu ── */
+  contextCard: {
+    width: SCREEN_W - 64, backgroundColor: '#27272a', borderRadius: 14,
+    paddingVertical: 8, borderWidth: 1, borderColor: '#52525b', elevation: 20,
+  },
+  contextTitle: {
+    fontSize: 15, fontWeight: '700', color: colors.textMain,
+    paddingHorizontal: 16, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#3f3f46',
+  },
+  contextRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 14,
+    paddingHorizontal: 16, paddingVertical: 13, borderBottomWidth: 1, borderBottomColor: '#3f3f46',
+  },
+  contextRowLast: { borderBottomWidth: 0 },
+  contextRowText: { fontSize: 15, color: colors.textMain, fontWeight: '500' },
 
   /* ── folder picker ── */
-  pickerOverlay: {
-    flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end',
-  },
+  pickerOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' },
   pickerCard: {
-    backgroundColor: colors.surface, borderTopLeftRadius: 20, borderTopRightRadius: 20,
-    maxHeight: '60%', paddingBottom: 32,
+    backgroundColor: '#27272a', borderTopLeftRadius: 20, borderTopRightRadius: 20,
+    maxHeight: '60%', borderWidth: 1, borderColor: '#52525b',
   },
   pickerHeader: {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-    paddingHorizontal: 20, paddingVertical: 16, borderBottomWidth: 1, borderBottomColor: colors.border,
+    paddingHorizontal: 20, paddingVertical: 16, borderBottomWidth: 1, borderBottomColor: '#3f3f46',
   },
   pickerTitle: { fontSize: 17, fontWeight: '700', color: colors.textMain },
   pickerRow: {
-    flexDirection: 'row', alignItems: 'center', gap: 14,
-    paddingHorizontal: 20, paddingVertical: 16, borderBottomWidth: 1, borderBottomColor: colors.border,
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    paddingHorizontal: 20, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: '#3f3f46',
   },
   pickerRowText: { flex: 1, fontSize: 15, color: colors.textMain },
   pickerRowMeta: { fontSize: 13, color: colors.mutedForeground },
-  pickerEmpty: { padding: 24, textAlign: 'center', color: colors.muted, fontSize: 14 },
+  pickerEmpty: { padding: 20, textAlign: 'center', color: colors.muted, fontSize: 14 },
 });
